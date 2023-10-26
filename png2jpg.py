@@ -9,7 +9,7 @@ from watchdog.events import FileSystemEventHandler
 # Define the paths
 start_dir = Path('./imgs')
 backup_dir = start_dir / 'backup'
-backup_info_file = start_dir / 'backup_info.json'
+backup_info_file = Path('./backup_info.json')
 
 
 # Create the "backup" folder and directory if they don't exist
@@ -22,7 +22,6 @@ backed_up_data = {}
 def convert_and_backup(folder_path):
     for item in folder_path.glob('*'):
         if item.is_file() and item.suffix.lower() == '.png':
-            print('Converting:', item)
 
             # Open the PNG image
             with Image.open(item) as img:
@@ -53,15 +52,14 @@ def convert_and_backup(folder_path):
                 img.save(dest_path)
                 print('Saved as:', dest_path)
 
-                # Update the backed-up data
-                if folder_path.name in backed_up_data:
-                    backed_up_data[folder_path.name].append(item.name)
-                else:
-                    backed_up_data[folder_path.name] = [item.name]
+            # Update the backed-up data
+            if folder_path.name in backed_up_data:
+                backed_up_data[folder_path.name].append(relative_path.name)
+            else:
+                backed_up_data[folder_path.name] = [relative_path.name]
 
-                # Save the updated data to the JSON file
-                with open(backup_info_file, 'w') as json_file:
-                    json.dump(backed_up_data, json_file)
+            # Save the updated data to the JSON file
+            save_backed_up_data(backed_up_data)
 
 def load_backed_up_data():
     if backup_info_file.exists():
@@ -94,15 +92,25 @@ class DirectoryHandler(FileSystemEventHandler):
                 time.sleep(5)
 
                 convert_and_backup(folder_path)
-                backed_up_data[folder_name] = []
-                save_backed_up_data(backed_up_data)
-            else:
-                # This folder has been previously processed, continue monitoring for new files
-                event_handler = FileHandler(folder_path)
-                observer = Observer()
-                observer.schedule(event_handler, path=folder_path, recursive=False)
-                observer.start()
-                observer.join()
+
+
+def monitor_changes():
+    try:
+        while True:
+            # Check for changes in the original folders every 60 seconds
+            for folder_name in backed_up_data.keys():
+                folder_path = start_dir / folder_name
+                for item in folder_path.glob('*'):
+                    print(item)
+                    if item.is_file() and item.suffix.lower() == '.png':
+                        if item.relative_to(folder_path) not in backed_up_data[folder_name]:
+                            print(f'New file detected in {folder_name}: {item.name}')
+                            convert_and_backup(folder_path)
+                    break
+            time.sleep(60)
+
+    except KeyboardInterrupt:
+        print("Quitting Program")
 
 if __name__ == "__main__":
     backed_up_data = load_backed_up_data()
@@ -112,7 +120,7 @@ if __name__ == "__main__":
     observer = Observer()
     observer.schedule(event_handler, path=start_dir, recursive=False)
     observer.start()
-
+    monitor_changes()
     try:
         while True:
             time.sleep(1)
