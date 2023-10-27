@@ -51,6 +51,8 @@ coverage.xml
 .pytest_cache/
 cover/
 imgs/
+cobas_6500_testespngs/
+u_701_testespngs - Cópia/
 *.png
 *.jpg
 

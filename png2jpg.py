@@ -8,21 +8,13 @@ from watchdog.events import FileSystemEventHandler
 start_dir = Path('./imgs')
 backup_dir = start_dir / 'backup'
 backup_info_file = Path('./backup_info.json')
+log_file = Path('./processed_files.json')  # New log file for tracking processed files
 
 # Create the "backup" folder and directory if they don't exist
 backup_dir.mkdir(parents=True, exist_ok=True)
 
-def load_backed_up_data():
-    if not backup_info_file.exists():
-        # Create the file if it doesn't exist
-        with open(backup_info_file, 'w') as json_file:
-            json.dump({}, json_file)
-
-    with open(backup_info_file, 'r') as json_file:
-        return json.load(json_file)
-
 # Initialize a dictionary to store the backed-up folder names and file names
-backed_up_data = load_backed_up_data()
+backed_up_data = {}
 
 # Function to convert and backup a file
 def convert_and_backup(file_path):
@@ -38,44 +30,49 @@ def convert_and_backup(file_path):
         elif source_folder_name.startswith('cobas_6500_'):
             custom_folder_name = 'core_' + source_folder_name[len('cobas_6500_'):]
 
-        print('relative', relative_path)
-        print('folder', folder_path)
-        print('source folder', source_folder_name)
-        
-        if relative_path not in backed_up_data.get(source_folder_name, []):
+        # Check if the file has been processed for this folder
+        if not is_file_processed(log_file, custom_folder_name, relative_path):
             # Open the PNG image
             with Image.open(file_path) as img:
                 img = img.convert('RGB')
                 new_width = img.width // 2
                 new_height = img.height // 2
-                img = img.resize((new_width, new_height), Image.LANCZOS)
+                img = img.resize((new_width, new_height))
 
                 # Define the destination path with the custom folder name
                 dest_path = backup_dir / custom_folder_name / relative_path.with_suffix('.jpg')
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 img.save(dest_path)
 
-            # Update the backed-up data
-            if source_folder_name in backed_up_data:
-                backed_up_data[source_folder_name].append(relative_path.name)
-            else:
-                backed_up_data[source_folder_name] = [relative_path.name]
-            save_backed_up_data(backed_up_data)
+            # Log the processed file
+            log_processed_file(log_file, source_folder_name, relative_path)
 
+# Function to check if a file has been processed
+def is_file_processed(log_file, folder_name, relative_path):
+    processed_files = load_processed_files(log_file)
+    return folder_name in processed_files and relative_path in processed_files[folder_name]
 
+# Function to log a processed file
+def log_processed_file(log_file, folder_name, relative_path):
+    processed_files = load_processed_files(log_file)
+    if folder_name in processed_files:
+        processed_files[folder_name].append(relative_path)
+    else:
+        processed_files[folder_name] = [relative_path]
+    save_processed_files(log_file, processed_files)
 
-def load_backed_up_data():
-    if not backup_info_file.exists():
-        # Create the file if it doesn't exist
-        with open(backup_info_file, 'w') as json_file:
-            json.dump({}, json_file)
+# Function to load the processed files data
+def load_processed_files(log_file):
+    if not log_file.exists():
+        return {}
 
-    with open(backup_info_file, 'r') as json_file:
-        return json.load(json_file)
+    with open(log_file, 'r') as file:
+        return json.load(file)
 
-def save_backed_up_data(data):
-    with open(backup_info_file, 'w') as json_file:
-        json.dump(data, json_file)
+# Function to save the processed files data
+def save_processed_files(log_file, data):
+    with open(log_file, 'w') as file:
+        json.dump(data, file, default=str)
 
 class FileHandler(FileSystemEventHandler):
     def on_created(self, event):
