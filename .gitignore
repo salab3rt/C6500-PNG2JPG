@@ -55,6 +55,7 @@ cobas_6500_testespngs/
 u_701_testespngs - Cópia/
 *.png
 *.jpg
+*.db
 
 # Translations
 *.mo
