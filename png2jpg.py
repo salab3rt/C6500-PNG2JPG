@@ -4,6 +4,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import sqlite3
 import logging
+import time
 
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ def is_file_processed(file_path, conn):
 
 def save_db_record(file_path, conn):
     cur = conn.cursor()
-    cur.execute('INSERT INTO processed_files (file_path) VALUES (?)', (file_path.name,))
+    cur.execute('INSERT INTO processed_files (file_path) VALUES (?)', (file_path,))
     cur.close()
 
 
@@ -77,18 +78,24 @@ def convert_and_backup(file_path):
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             img.save(dest_path)
 
-        logger.info(f'Converted file: {file_path}')
+        #logger.info(f'Converted file: {file_path}')
 
 
 class FileHandler(FileSystemEventHandler):
     def on_created(self, event):
+        logger.info(f'Processed file: {event}')
+
         if not event.is_directory:
             file_path = Path(event.src_path)
+            full_path = file_path.parent.name + file_path.name
             with sqlite3.connect('database.db') as conn:
-                if file_path.is_file() and file_path.suffix.lower() == '.png' and not is_file_processed(file_path.name, conn):
-                    convert_and_backup(file_path)
-                    logger.info(f'Processed file: {file_path}')
-                    save_db_record(file_path, conn)
+                if file_path.is_file() and file_path.suffix.lower() == '.png' and not is_file_processed(full_path, conn):
+                    time.sleep(0.35)
+                    try:
+                        convert_and_backup(file_path)
+                        save_db_record(full_path, conn)
+                    except Exception as e:
+                        logger.error(f'Failed to process file: {file_path} - {e}')
 
 if __name__ == "__main__":
     # Start monitoring the "imgs" folder for new files
