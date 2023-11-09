@@ -48,7 +48,7 @@ def is_file_processed(file_path, conn):
 
 def save_db_record(file_path, conn):
     cur = conn.cursor()
-    cur.execute('INSERT INTO processed_files (file_path) VALUES (?)', (file_path,))
+    cur.execute('INSERT INTO processed_files (file_path) VALUES (?)', (str(file_path),))
     cur.close()
 
 
