@@ -7,6 +7,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import logging
 import time
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -19,7 +20,7 @@ logger.addHandler(file_handler)
 # Define the paths
 start_dir = Path('./imgs')
 backup_dir = start_dir / 'backup'
-backup_info_file = Path('./backup_info.json')
+#backup_info_file = Path('./backup_info.json')
 
 # Create the "backup" folder and directory if they don't exist
 backup_dir.mkdir(parents=True, exist_ok=True)
@@ -43,16 +44,16 @@ def is_folder_processed(folder_path, conn):
     row = cur.fetchone()
     cur.close()
 
-    if row is not None:
+    if row:
         return True
     else:
         return False
 
 # Add the existing folders to the queue
-for folder in start_dir.iterdir():
-    if folder.is_dir():
-        with sqlite3.connect('database.db') as conn:
-            if not is_folder_processed(folder.name, conn):
+with sqlite3.connect('database.db') as conn:
+    for folder in start_dir.iterdir():
+        if folder.is_dir():
+            if not is_folder_processed(folder, conn):
                 process_queue.put(folder)
 
 def save_db_record(full_path, conn):
@@ -126,30 +127,31 @@ def convert_and_backup(file_path):
                 img = img.convert('RGB')
                 new_width = img.width // 2
                 new_height = img.height // 2
-                img = img.resize((new_width, new_height), Image.Resampling.BILINEAR)
+                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
                 # Define the destination path with the custom folder name
-                dest_path = backup_dir / custom_folder_name / file_path.with_suffix('.jpg')
+                year = datetime.now().year
+                dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
+                dest_path = dest_path.with_suffix('.jpg')
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
-                print(file_path.name)
                 img.save(dest_path)
 
-                logger.info(f'Converted file: {folder_path / relative_path}')
+                #logger.info(f'Converted file: {file_path}')
 
         except Exception as e:
-            logger.error(f'Error processing {folder_path / relative_path}: {e}')
+            logger.error(f'Error processing {file_path}: {e}')
 
 class FileHandler(FileSystemEventHandler):
     def on_created(self, event):
-        logger.info(f'File created: {event.src_path}')
+        #logger.info(f'File created: {event.src_path}')
 
         if not event.is_directory:
             file_path = Path(event.src_path)
-            
-            with sqlite3.connect('database.db') as conn:
-                if not is_folder_processed(file_path.parent, conn):
-                    process_queue.put(file_path)
-                    time.sleep(0.35)
+            if file_path.suffix.lower() == '.png':
+                with sqlite3.connect('database.db') as conn:
+                    if not is_folder_processed(file_path.name, conn):
+                        process_queue.put(file_path)
+                        time.sleep(0.35)
 
 if __name__ == "__main__":
     # Start the workers
@@ -160,7 +162,7 @@ if __name__ == "__main__":
 
     # Start monitoring the "imgs" folder for new files
     event_handler = FileHandler()
-    observer = Observer()
+    observer = Observer(timeout=1.0)
     observer.schedule(event_handler, path=start_dir, recursive=True)
     observer.start()
 
