@@ -2,12 +2,14 @@ import queue
 import threading
 import sqlite3
 from pathlib import Path
+import os
 from PIL import Image
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import logging
 import time
 from datetime import datetime
+from tqdm import tqdm
 
 
 def setup_logging():
@@ -78,7 +80,7 @@ def save_db_record(records, conn):
 
 
 
-def process_file(file_path):
+def process_file(file_path, folders_progress_bar, files_progress_bar):
     try:
         with sqlite3.connect('database.db') as conn:
             if file_path.is_file() and file_path.suffix.lower() == '.png':
@@ -86,6 +88,7 @@ def process_file(file_path):
 
                 full_path = file_path.parent / file_path.name  # Join directory and filename
                 save_db_record(full_path, conn)
+                files_progress_bar.update()
 
 
             elif file_path.is_dir():
@@ -96,6 +99,7 @@ def process_file(file_path):
                         
                         full_path = file_path / file.name
                         save_db_record(full_path, conn)
+                        files_progress_bar.update()
                         
     except Exception as e:
         print(e)
@@ -103,11 +107,11 @@ def process_file(file_path):
 
 
 
-def worker():
+def worker(folders_progress_bar, files_progress_bar):
     try:
         while True:
             file_path = process_queue.get()
-            process_file(file_path)
+            process_file(file_path, folders_progress_bar, files_progress_bar)
             process_queue.task_done()
             
     except Exception as e:
@@ -148,18 +152,51 @@ def convert_and_backup(file_path):
         except Exception as e:
             logger.error(f'Error processing {file_path}: {e}')
 
+def wait_for_readable(file_path, max_wait_seconds=5, sleep_duration=0.1):
+    """
+    Wait for the file to become readable or until the maximum wait time is reached.
+
+    Parameters:
+    - file_path: Path to the file.
+    - max_wait_seconds: Maximum time to wait for the file to become readable.
+    - sleep_duration: Time to sleep between checks.
+
+    Returns:
+    - True if the file becomes readable, False otherwise.
+    """
+    start_time = time.time()
+
+    while time.time() - start_time < max_wait_seconds:
+        if os.access(file_path, os.R_OK):
+            return True
+
+        time.sleep(sleep_duration)
+
+    return False
+
 
 class FileHandler(FileSystemEventHandler):
+    def __init__(self):
+        super().__init__()
+        self.added_to_queue = set()
+        self.reset_threshold = 100  # Adjust the threshold
+
     def on_created(self, event):
-        #logger.info(f'File created: {event.src_path}')
         try:
             if not event.is_directory:
                 file_path = Path(event.src_path)
                 if file_path.suffix.lower() == '.png':
-                    file_count = get_file_count_in_folder(file_path.parent)
-                    if not is_folder_processed(file_path.parent, file_count=file_count):
-                        process_queue.put(file_path)
-                        time.sleep(0.5)
+                    # Check if the file has already been added to the queue
+                    if file_path not in self.added_to_queue:
+                        file_count = get_file_count_in_folder(file_path.parent)
+                        if not is_folder_processed(file_path.parent, file_count=file_count):
+                            if wait_for_readable(file_path):
+                                self.added_to_queue.add(file_path)
+                                process_queue.put(file_path)
+
+                            # Reset the set if it reaches the threshold
+                            if len(self.added_to_queue) >= self.reset_threshold:
+                                self.added_to_queue = set()
         except Exception as e:
             logger.error(f'Event Error: {e}, Event: {event}')
             
@@ -168,9 +205,13 @@ if __name__ == "__main__":
     #Setup logger
     logger = setup_logging()
     
+    
+    folders_progress_bar = tqdm(desc="Folders", unit="folder")
+    files_progress_bar = tqdm(desc="Files", unit="file")
+
     workers = []
     for i in range(4):
-        t = threading.Thread(target=worker)
+        t = threading.Thread(target=worker, args=(folders_progress_bar, files_progress_bar))
         t.daemon = True
         t.start()
         workers.append(t)
@@ -189,3 +230,6 @@ if __name__ == "__main__":
 
         process_queue.join()
         main_conn.close()
+    
+    folders_progress_bar.close()
+    files_progress_bar.close()

@@ -1,3 +1,5 @@
 pathlib
 Pillow
 watchdog
+tqdm
+sqlite3
