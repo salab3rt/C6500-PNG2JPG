@@ -15,15 +15,12 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
-# Define the paths
 start_dir = Path('./imgs')
 backup_dir = start_dir / 'backup'
 backup_info_file = Path('./backup_info.json')
 
-# Create the "backup" folder and directory if they don't exist
 backup_dir.mkdir(parents=True, exist_ok=True)
 
-# Create the database if it doesn't exist
 conn = sqlite3.connect('database.db')
 cur = conn.cursor()
 
@@ -52,7 +49,6 @@ def save_db_record(file_path, conn):
     cur.close()
 
 
-# Function to convert and backup a file
 def convert_and_backup(file_path):
     if file_path.suffix.lower() == '.png':
         folder_path = file_path.parent
@@ -66,14 +62,12 @@ def convert_and_backup(file_path):
         elif source_folder_name.startswith('cobas_6500_'):
             custom_folder_name = 'core_' + source_folder_name[len('cobas_6500_'):]
 
-        # Open the PNG image
         with Image.open(file_path) as img:
             img = img.convert('RGB')
             new_width = img.width // 2
             new_height = img.height // 2
             img = img.resize((new_width, new_height), Image.Resampling.BILINEAR)
 
-            # Define the destination path with the custom folder name
             dest_path = backup_dir / custom_folder_name / relative_path.with_suffix('.jpg')
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             img.save(dest_path)
@@ -98,7 +92,6 @@ class FileHandler(FileSystemEventHandler):
                         logger.error(f'Failed to process file: {file_path} - {e}')
 
 if __name__ == "__main__":
-    # Start monitoring the "imgs" folder for new files
     event_handler = FileHandler()
     observer = Observer()
     observer.schedule(event_handler, path=start_dir, recursive=True)

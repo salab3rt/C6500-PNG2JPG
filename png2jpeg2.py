@@ -22,10 +22,8 @@ start_dir = Path('./imgs')
 backup_dir = start_dir / 'backup'
 #backup_info_file = Path('./backup_info.json')
 
-# Create the "backup" folder and directory if they don't exist
 backup_dir.mkdir(parents=True, exist_ok=True)
 
-# Create the database if it doesn't exist
 conn = sqlite3.connect('database.db')
 cur = conn.cursor()
 
@@ -36,7 +34,7 @@ cur.close()
 conn.close()
 
 # Create a queue to store the folders that need to be processed
-process_queue = queue.Queue()  # Rename the queue to avoid conflicts
+process_queue = queue.Queue()
 
 def is_folder_processed(folder_path, conn):
     cur = conn.cursor()
@@ -106,15 +104,13 @@ def worker():
 
         process_queue.task_done()
 
-# Function to convert and backup a file
 def convert_and_backup(file_path):
-    #print(file_path)
-    if file_path.is_file() and file_path.suffix.lower() == '.png':  # Check if it's a file
+    if file_path.is_file() and file_path.suffix.lower() == '.png':
         folder_path = file_path.parent
         relative_path = folder_path.relative_to(start_dir)
         source_folder_name = folder_path.name
 
-        custom_folder_name = source_folder_name  # Initialize it with the original folder name
+        custom_folder_name = source_folder_name
 
         if source_folder_name.startswith('u_701_'):
             custom_folder_name = 'micro_' + source_folder_name[len('u_701_'):]
@@ -122,14 +118,13 @@ def convert_and_backup(file_path):
             custom_folder_name = 'core_' + source_folder_name[len('cobas_6500_'):]
 
         try:
-            # Open the PNG image
             with Image.open(file_path) as img:
                 img = img.convert('RGB')
                 new_width = img.width // 2
                 new_height = img.height // 2
                 img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-                # Define the destination path with the custom folder name
+                # Define the destination path
                 year = datetime.now().year
                 dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
                 dest_path = dest_path.with_suffix('.jpg')
