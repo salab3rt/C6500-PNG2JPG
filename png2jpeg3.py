@@ -26,32 +26,38 @@ backup_dir = start_dir / 'backup'
 backup_dir.mkdir(parents=True, exist_ok=True)
 
 # Create the database if it doesn't exist
-conn = sqlite3.connect('database.db')
-cur = conn.cursor()
+main_conn = sqlite3.connect('database.db', check_same_thread=False)
+cur = main_conn.cursor()
 
 cur.execute('CREATE TABLE IF NOT EXISTS processed_files (file_path TEXT PRIMARY KEY)')
-conn.commit()
+main_conn.commit()
 cur.close()
 
 # Create a queue to store the folders that need to be processed
-process_queue = queue.Queue()  # Rename the queue to avoid conflicts
+process_queue = queue.Queue()
 
-def is_folder_processed(folder_path, conn):
-    cur = conn.cursor()
-    cur.execute('SELECT * FROM processed_files WHERE file_path LIKE ?', (str(folder_path),))  # Use str() to ensure it's a string
-    row = cur.fetchone()
-    cur.close()
+def is_folder_processed(folder_path, file_count = 0):
+    print(folder_path)
+    with main_conn:
+        cur = main_conn.cursor()
+        cur.execute('SELECT * FROM processed_files WHERE file_path LIKE ?', (str(folder_path) + '%',))
+        row = cur.fetchone()
+        cur.close()
 
-    if row:
-        return True
-    else:
-        return False
+        if row and len(row) >= file_count:
+            return True
+        else:
+            return False
+
+def get_file_count_in_folder(folder_path):
+    return sum(1 for _ in folder_path.glob('*.png'))
 
 # Add the existing folders to the queue
-with sqlite3.connect('database.db') as conn:
+with main_conn:
     for folder in start_dir.iterdir():
         if folder.is_dir():
-            if not is_folder_processed(folder, conn):
+            file_count = get_file_count_in_folder(folder)
+            if not is_folder_processed(folder, file_count=file_count):
                 process_queue.put(folder)
 
 def save_db_record(records, conn):
@@ -63,44 +69,37 @@ def save_db_record(records, conn):
 
 
 
-def process_file(file_path, conn):
+def process_file(file_path):
     # Convert and backup the folder
-    if file_path.is_file() and file_path.suffix.lower() == '.png':
-        convert_and_backup(file_path)
+    try:
+        with sqlite3.connect('database.db') as conn:
+            if file_path.is_file() and file_path.suffix.lower() == '.png':
+                convert_and_backup(file_path)
 
-        full_path = file_path.parent / file_path.name  # Join directory and filename
-        #print("FULLPATH from event:", full_path)
-
-        # Mark the folder as processed
-        with conn:
-            save_db_record(full_path, conn)
+                full_path = file_path.parent / file_path.name  # Join directory and filename
+                save_db_record(full_path, conn)
 
 
-    elif file_path.is_dir():
-        try:
-            with sqlite3.connect('database.db') as conn:
+            elif file_path.is_dir():
                 for file in file_path.iterdir():
                     #print("FILE:",file)
                     if file.is_file() and file.suffix.lower() == '.png':
                         convert_and_backup(file)
-
-                        full_path = file_path / file.name  # Join directory and filename
-                        #print("FULLPATH from folder file:",full_path)
-
-                        # Mark the folder as processed
-                        with conn:
-                            save_db_record(full_path, conn)
-        except Exception as e:
-            print(e)
-            logger.error(f'Error processing {file_path}: {e}')
+                        
+                        full_path = file_path / file.name
+                        save_db_record(full_path, conn)
+                        
+    except Exception as e:
+        print(e)
+        logger.error(f'Error processing {file_path}: {e}')
 
 
 
-def worker(conn):
+def worker():
     while True:
         file_path = process_queue.get()
 
-        process_file(file_path, conn)
+        process_file(file_path)
 
         process_queue.task_done()
 
@@ -139,6 +138,7 @@ def convert_and_backup(file_path):
         except Exception as e:
             logger.error(f'Error processing {file_path}: {e}')
 
+
 class FileHandler(FileSystemEventHandler):
     def on_created(self, event):
         #logger.info(f'File created: {event.src_path}')
@@ -146,17 +146,18 @@ class FileHandler(FileSystemEventHandler):
         if not event.is_directory:
             file_path = Path(event.src_path)
             if file_path.suffix.lower() == '.png':
-                with conn:
-                    if not is_folder_processed(file_path.name, conn):
-                        process_queue.put(file_path)
-                        time.sleep(0.35)
+                file_count = get_file_count_in_folder(file_path.parent)
+                if not is_folder_processed(file_path.parent, file_count=file_count):
+                    process_queue.put(file_path)
+                    time.sleep(0.5)
 
 if __name__ == "__main__":
-    # Start the workers
+    workers = []
     for i in range(4):
-        t = threading.Thread(target=worker, args=(conn,))
+        t = threading.Thread(target=worker)
         t.daemon = True
         t.start()
+        workers.append(t)
 
     # Start monitoring the "imgs" folder for new files
     event_handler = FileHandler()
@@ -166,11 +167,11 @@ if __name__ == "__main__":
 
     try:
         while True:
-            pass
+            time.sleep(0.5)
     except KeyboardInterrupt:
         observer.stop()
         observer.join()  # Wait for the observer to finish
 
         # Wait for the workers to finish
         process_queue.join()
-        conn.close()
+        main_conn.close()
