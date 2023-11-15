@@ -1,3 +1,6 @@
+from gc import disable
+from hmac import new
+from itertools import count
 import queue
 import threading
 import sqlite3
@@ -9,7 +12,7 @@ from watchdog.events import FileSystemEventHandler
 import logging
 import time
 from datetime import datetime
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 
 def setup_logging():
@@ -80,7 +83,7 @@ def save_db_record(records, conn):
 
 
 
-def process_file(file_path, folders_progress_bar, files_progress_bar):
+def process_file(file_path):
     try:
         with sqlite3.connect('database.db') as conn:
             if file_path.is_file() and file_path.suffix.lower() == '.png':
@@ -88,18 +91,17 @@ def process_file(file_path, folders_progress_bar, files_progress_bar):
 
                 full_path = file_path.parent / file_path.name  # Join directory and filename
                 save_db_record(full_path, conn)
-                files_progress_bar.update()
 
 
             elif file_path.is_dir():
-                for file in file_path.iterdir():
-                    #print("FILE:",file)
-                    if file.is_file() and file.suffix.lower() == '.png':
-                        convert_and_backup(file)
-                        
-                        full_path = file_path / file.name
-                        save_db_record(full_path, conn)
-                        files_progress_bar.update()
+                #dir_contents = tqdm(file_path.iterdir(), unit=' Files')
+                    for file in file_path.iterdir():
+                    #dir_contents.set_description(f"{file}")
+                        if file.is_file() and file.suffix.lower() == '.png':
+                            convert_and_backup(file)
+
+                            full_path = file_path / file.name
+                            save_db_record(full_path, conn)
                         
     except Exception as e:
         print(e)
@@ -107,12 +109,17 @@ def process_file(file_path, folders_progress_bar, files_progress_bar):
 
 
 
-def worker(folders_progress_bar, files_progress_bar):
+def worker():
     try:
-        while True:
-            file_path = process_queue.get()
-            process_file(file_path, folders_progress_bar, files_progress_bar)
-            process_queue.task_done()
+        with tqdm(unit="file", leave=True) as pbar:
+            while True:
+            
+                file_path = process_queue.get()
+                process_file(file_path)
+                process_queue.task_done()
+                pbar.update(1)
+                pbar.refresh()
+                
             
     except Exception as e:
         print(e)
@@ -152,7 +159,7 @@ def convert_and_backup(file_path):
         except Exception as e:
             logger.error(f'Error processing {file_path}: {e}')
 
-def wait_for_readable(file_path, max_wait_seconds=5, sleep_duration=0.1):
+def wait_for_readable(file_path, max_wait_seconds=5, sleep_duration=0.2):
     """
     Wait for the file to become readable or until the maximum wait time is reached.
 
@@ -205,13 +212,10 @@ if __name__ == "__main__":
     #Setup logger
     logger = setup_logging()
     
-    
-    folders_progress_bar = tqdm(desc="Folders", unit="folder")
-    files_progress_bar = tqdm(desc="Files", unit="file")
 
     workers = []
-    for i in range(4):
-        t = threading.Thread(target=worker, args=(folders_progress_bar, files_progress_bar))
+    for i in range(6):
+        t = threading.Thread(target=worker)
         t.daemon = True
         t.start()
         workers.append(t)
@@ -230,6 +234,6 @@ if __name__ == "__main__":
 
         process_queue.join()
         main_conn.close()
+        os.system('cls')
+        print('Terminating Script..')
     
-    folders_progress_bar.close()
-    files_progress_bar.close()

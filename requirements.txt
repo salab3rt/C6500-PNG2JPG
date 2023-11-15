@@ -3,3 +3,4 @@ Pillow
 watchdog
 tqdm
 sqlite3
+click
