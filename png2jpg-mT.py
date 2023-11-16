@@ -74,13 +74,13 @@ def is_processed(file_path):
     year = datetime.now().year
     dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
     dest_path = dest_path.with_suffix('.jpg')
-    #print('Dest:' + str(dest_path))
+    print('Dest:' + str(dest_path))
     
     if dest_path.is_file():
-        #print('True')
+        print('True')
         return True
     else:
-        #print('False')
+        print('False')
         return False
         
 
@@ -222,30 +222,19 @@ def wait_for_readable(file_path, max_wait_seconds=5, sleep_duration=0.2):
     return False
 
 
-processed_files = set()  # Set to track processed file paths
 
 class FileHandler(FileSystemEventHandler):
-    def __init__(self):
-        super().__init__()
-        self.added_to_queue = set()
-        self.reset_threshold = 100  # Adjust the threshold
-
     def on_created(self, event):
+        print(event)
         try:
-            if not event.is_directory:
-                file_path = Path(event.src_path)
-                if file_path.suffix.lower() == '.png':
-                    # Check if the file has already been added to the queue
-                    if file_path not in self.added_to_queue:
-                        #file_count = get_file_count_in_folder(file_path.parent)
-                        if not is_processed(file_path.parent):
-                            if wait_for_readable(file_path):
-                                process_queue.put(file_path)
-                                self.added_to_queue.add(file_path)
+            file_path = Path(event.src_path)
+            if event.is_directory:
+                for file in file_path.iterdir():
+                    print(file)
+                    if wait_for_readable(file):
+                        process_queue.put(file)
+                    
 
-                            # Reset the set if it reaches the threshold
-                if len(self.added_to_queue) >= self.reset_threshold:
-                    self.added_to_queue = set()
         except Exception as e:
             logger.error(f'Event Error: {e}, Event: {event}')
 
@@ -263,7 +252,7 @@ if __name__ == "__main__":
 
     event_handler = FileHandler()
     observer = Observer()
-    observer.schedule(event_handler, path=start_dir, recursive=True)
+    observer.schedule(event_handler, path=start_dir, recursive=False)
     observer.start()
 
     try:
