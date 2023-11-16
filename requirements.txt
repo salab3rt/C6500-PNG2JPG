@@ -4,3 +4,4 @@ watchdog
 tqdm
 sqlite3
 click
+colorama

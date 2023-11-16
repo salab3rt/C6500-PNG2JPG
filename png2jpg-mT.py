@@ -1,6 +1,3 @@
-from gc import disable
-from hmac import new
-from itertools import count
 import queue
 import threading
 import sqlite3
@@ -13,6 +10,8 @@ import logging
 import time
 from datetime import datetime
 from tqdm import tqdm, trange
+from colorama import just_fix_windows_console
+just_fix_windows_console()
 
 
 def setup_logging():
@@ -85,40 +84,54 @@ def save_db_record(records, conn):
 
 def process_file(file_path):
     try:
+        os.system('cls')
+        print('Processing files..')
+        #with tqdm(desc="Processing file", unit="files", leave=True) as progress_bar:
         with sqlite3.connect('database.db') as conn:
             if file_path.is_file() and file_path.suffix.lower() == '.png':
-                convert_and_backup(file_path)
-
-                full_path = file_path.parent / file_path.name  # Join directory and filename
-                save_db_record(full_path, conn)
+                with tqdm(total=1, desc=f'{file_path.name}', unit='file') as pbar:
+                    convert_and_backup(file_path)
+                    full_path = file_path.parent / file_path.name  # Join directory and filename
+                    save_db_record(full_path, conn)
+                    pbar.update(1)
+                    pbar.delay(1.0)
+                
+                    #progress_bar.update()
+                    #progress_bar.refresh()
+                pbar.clear()
+                pbar.close()
 
 
             elif file_path.is_dir():
-                #dir_contents = tqdm(file_path.iterdir(), unit=' Files')
+                with tqdm(total=get_file_count_in_folder(file_path), desc=f'{file_path.name[:21]}', unit='file') as pbar:
                     for file in file_path.iterdir():
-                    #dir_contents.set_description(f"{file}")
                         if file.is_file() and file.suffix.lower() == '.png':
                             convert_and_backup(file)
-
                             full_path = file_path / file.name
                             save_db_record(full_path, conn)
+                        pbar.update(1)
+                            
+                pbar.clear()
+                pbar.close()
+                                
                         
     except Exception as e:
         print(e)
         logger.error(f'Error processing {file_path}: {e}')
+    finally:
+        os.system('cls')
+        print('Waiting for new files..')
+    
 
 
 
 def worker():
     try:
-        with tqdm(unit="file", leave=True) as pbar:
-            while True:
+        while True:
             
-                file_path = process_queue.get()
-                process_file(file_path)
-                process_queue.task_done()
-                pbar.update(1)
-                pbar.refresh()
+            file_path = process_queue.get()
+            process_file(file_path)
+            process_queue.task_done()
                 
             
     except Exception as e:
