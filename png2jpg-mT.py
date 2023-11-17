@@ -1,17 +1,16 @@
 import queue
+from concurrent.futures import ThreadPoolExecutor
 import threading
-import sqlite3
 from pathlib import Path
 import os
 from PIL import Image
-from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 from watchdog.events import FileSystemEventHandler
 import logging
 import time
 from datetime import datetime
 from tqdm import tqdm, trange
-from colorama import just_fix_windows_console
-just_fix_windows_console()
+
 
 
 def setup_logging():
@@ -34,8 +33,6 @@ backup_dir = start_dir / 'backup'
 
 backup_dir.mkdir(parents=True, exist_ok=True)
 
-folder_process_queue = queue.Queue()
-file_process_queue = queue.Queue()
 
 #def is_folder_processed(folder_path, file_count = 0):
 #    try:
@@ -53,27 +50,26 @@ file_process_queue = queue.Queue()
         
 def is_processed(file_path):
     #print(file_path)
-    parent_folder = file_path.parent.name
-    custom_folder_name = ''
-    #print(parent_folder)
-    if parent_folder.startswith('u_701_'):
-        custom_folder_name = 'micro_' + parent_folder[len('u_701_'):]
-        
-    elif parent_folder.startswith('cobas_6500_'):
-        custom_folder_name = 'core_' + parent_folder[len('cobas_6500_'):]
-        
-    #print(custom_folder_name)
-        
-    year = datetime.now().year
-    dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
-    dest_path = dest_path.with_suffix('.jpg')
-    print('Dest:' + str(dest_path))
-    
-    if dest_path.is_file():
-        print('True')
-        return True
+    if wait_for_readable(file_path):
+        parent_folder = file_path.parent.name
+        custom_folder_name = ''
+        #print(parent_folder)
+        if parent_folder.startswith('u_701_'):
+            custom_folder_name = 'micro_' + parent_folder[len('u_701_'):]
+
+        elif parent_folder.startswith('cobas_6500_'):
+            custom_folder_name = 'core_' + parent_folder[len('cobas_6500_'):]
+
+        #print(custom_folder_name)
+
+        year = datetime.now().year
+        dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
+        dest_path = dest_path.with_suffix('.jpg')
+        #print('Dest:' + str(dest_path))
+
+        if dest_path.is_file():
+            return True
     else:
-        print('False')
         return False
         
 
@@ -95,7 +91,7 @@ def get_file_count_in_folder(folder_path):
 def process_file(file_path):
     try:
         #if not is_processed(file_path):
-        print('Processing files..')
+        #print('Processing files..')
         #with tqdm(desc="Processing file", unit="files", leave=True) as progress_bar:
         #with sqlite3.connect('database.db') as conn:
         if file_path.is_file() and file_path.suffix.lower() == '.png':
@@ -110,9 +106,9 @@ def process_file(file_path):
                 #progress_bar.refresh()
             #pbar.clear()
             #pbar.close()
-            # if process_queue.qsize() == 0:
-            #     os.system('cls')
-            #     print('Waiting for new files..')
+            #if file_process_queue.empty and folder_process_queue.empty:
+            #    os.system('cls')
+            #    print('Waiting for new files..')
 
         elif file_path.is_dir():
             with tqdm(total=get_file_count_in_folder(file_path), desc=f'{file_path.name[:22]}', unit='file') as pbar:
@@ -126,6 +122,8 @@ def process_file(file_path):
             pbar.clear()
             pbar.close()
             os.system('cls')
+        else:
+            print('Already processed')
                                 
     except Exception as e:
         print(e)
@@ -133,74 +131,84 @@ def process_file(file_path):
     #finally:
         
         #print('Waiting for new files..')
-    
+class FileHandler(FileSystemEventHandler):
+
+    def on_created(self, event):
+        try:
+            #print(event)
+            #if not event.is_directory:
+            if event.is_directory:
+                folder_path = Path(event.src_path)
+                folder_process_queue.put(folder_path)
+                    #print(folder_process_queue.queue)
+        
+        except Exception as e:
+            logger.error(f'Event Error: {e}, Event: {event}')
 
 def folder_worker():
     try:
-        while file_process_queue.not_empty:
-            
+        while True:
+            time.sleep(.1)
+            #print(folder_process_queue.queue)
             folder_path = folder_process_queue.get()
-            print(folder_path)
-            for file in folder_path.iterdir():
-                time.sleep(0.35)
-                if file.suffix.lower() == '.png':
-                    print(file)
-                    if wait_for_readable(file):
-                        file_process_queue.put(file)
             
+            folder = Path(folder_path)
+            for file in folder.iterdir():
+                if file.is_file() and file.suffix.lower() == '.png' and not is_processed(file):
+                    #if wait_for_readable(file) and file_queue_lock.acquire(blocking=False):
+                    file_process_queue.put(file)
+                        
             folder_process_queue.task_done()
     except Exception as e:
         print(e)
-        logger.error(f'Worker thread error: {e}')
+        logger.error(f'Folder thread error: {e}')
 
 
 def file_worker():
-    try:
-        while True:
-            
+    while True:
+        try:
+            time.sleep(.1)
             file_path = file_process_queue.get()
             process_file(file_path)
             file_process_queue.task_done()
-
-    except Exception as e:
-        print(e)
-        logger.error(f'Worker thread error: {e}')
+        except Exception as e:
+            print(e)
+            logger.error(f'File thread error: {e}')
         
 
 # Function to convert and backup a file
 def convert_and_backup(file_path):
     #print(file_path)
-    if file_path.is_file() and file_path.suffix.lower() == '.png':  # Check if it's a file
-        folder_path = file_path.parent
-        relative_path = folder_path.relative_to(start_dir)
-        source_folder_name = folder_path.name
+    folder_path = file_path.parent
+    relative_path = folder_path.relative_to(start_dir)
+    source_folder_name = folder_path.name
 
-        custom_folder_name = source_folder_name
+    custom_folder_name = source_folder_name
 
-        if source_folder_name.startswith('u_701_'):
-            custom_folder_name = 'micro_' + source_folder_name[len('u_701_'):]
-        elif source_folder_name.startswith('cobas_6500_'):
-            custom_folder_name = 'core_' + source_folder_name[len('cobas_6500_'):]
+    if source_folder_name.startswith('u_701_'):
+        custom_folder_name = 'micro_' + source_folder_name[len('u_701_'):]
+    elif source_folder_name.startswith('cobas_6500_'):
+        custom_folder_name = 'core_' + source_folder_name[len('cobas_6500_'):]
 
-        try:
-            with Image.open(file_path) as img:
-                img = img.convert('RGB')
-                new_width = img.width // 2
-                new_height = img.height // 2
-                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    try:
+        with Image.open(file_path) as img:
+            img = img.convert('RGB')
+            new_width = img.width // 2
+            new_height = img.height // 2
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-                year = datetime.now().year
-                dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
-                dest_path = dest_path.with_suffix('.jpg')
-                dest_path.parent.mkdir(parents=True, exist_ok=True)
-                img.save(dest_path)
+            year = datetime.now().year
+            dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
+            dest_path = dest_path.with_suffix('.jpg')
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            img.save(dest_path)
 
-                #logger.info(f'Converted file: {file_path}')
+            #logger.info(f'Converted file: {file_path}')
 
-        except Exception as e:
-            logger.error(f'Error processing {file_path}: {e}')
+    except Exception as e:
+        logger.error(f'Error processing {file_path}: {e}')
 
-def wait_for_readable(file_path, max_wait_seconds=5, sleep_duration=0.2):
+def wait_for_readable(file_path, max_wait_seconds=5, sleep_duration=0.05):
     """
     Wait for the file to become readable or until the maximum wait time is reached.
 
@@ -227,25 +235,20 @@ def wait_for_readable(file_path, max_wait_seconds=5, sleep_duration=0.2):
 
 
 
-class FileHandler(FileSystemEventHandler):
 
-    def on_created(self, event):
-        try:
-            #print(event)
-            #if not event.is_directory:
-            if event.is_directory:
-                file_path = Path(event.src_path)
-                folder_process_queue.put(file_path)
-        
-        except Exception as e:
-            logger.error(f'Event Error: {e}, Event: {event}')
 
 
 if __name__ == "__main__":
     #Setup logger
     logger = setup_logging()
     
-
+    
+    folder_process_queue = queue.Queue(maxsize=-1)
+    file_process_queue = queue.Queue(maxsize=-1)
+    
+    folder_queue_lock = threading.Lock()
+    file_queue_lock = threading.Lock()
+    
     folder_workers = []
     for i in range(1):
         t = threading.Thread(target=folder_worker)
@@ -254,25 +257,25 @@ if __name__ == "__main__":
         folder_workers.append(t)
 
     files_workers = []
-    for i in range(4):
+    for i in range(6):
         t = threading.Thread(target=file_worker)
         t.daemon = True
         t.start()
         files_workers.append(t)
 
     event_handler = FileHandler()
-    observer = Observer(timeout=0.5)
+    observer = PollingObserver()
     observer.schedule(event_handler, path=start_dir, recursive=False)
     observer.start()
 
     try:
         while True:
-            time.sleep(1)
+            time.sleep(0.5)
     except KeyboardInterrupt:
         print('Terminating Script, waiting Job to finish')
         observer.stop()
-        folder_process_queue.join()
-        file_process_queue.join()
+        folder_process_queue.all_tasks_done
+        file_process_queue.all_tasks_done
         #main_conn.close()
         os.system('cls')
         
