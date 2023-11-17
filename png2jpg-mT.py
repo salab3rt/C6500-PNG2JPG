@@ -109,38 +109,38 @@ def get_file_count_in_folder(folder_path):
 
 def process_file(file_path):
     try:
-        if not is_processed(file_path):
-            print('Processing files..')
-            #with tqdm(desc="Processing file", unit="files", leave=True) as progress_bar:
-            #with sqlite3.connect('database.db') as conn:
-            if file_path.is_file() and file_path.suffix.lower() == '.png':
-                with tqdm(total=len(range(1)), desc=f'{file_path.name[:20]}', unit='file', leave=True) as pbar:
-                    convert_and_backup(file_path)
-                    #full_path = file_path.parent / file_path.name  # Join directory and filename
-                    #save_db_record(full_path, conn)
+        #if not is_processed(file_path):
+        print('Processing files..')
+        #with tqdm(desc="Processing file", unit="files", leave=True) as progress_bar:
+        #with sqlite3.connect('database.db') as conn:
+        if file_path.is_file() and file_path.suffix.lower() == '.png':
+            with tqdm(total=len(range(1)), desc=f'{file_path.name[:20]}', unit='file', leave=True) as pbar:
+                convert_and_backup(file_path)
+                #full_path = file_path.parent / file_path.name  # Join directory and filename
+                #save_db_record(full_path, conn)
+                pbar.update(1)
+                #pbar.delay(1.0)
+
+                #progress_bar.update()
+                #progress_bar.refresh()
+            #pbar.clear()
+            #pbar.close()
+            # if process_queue.qsize() == 0:
+            #     os.system('cls')
+            #     print('Waiting for new files..')
+
+        elif file_path.is_dir():
+            with tqdm(total=get_file_count_in_folder(file_path), desc=f'{file_path.name[:21]}', unit='file') as pbar:
+                for file in file_path.iterdir():
+                    if file.is_file() and file.suffix.lower() == '.png':
+                        convert_and_backup(file)
+                        #full_path = file_path / file.name
+                        #save_db_record(full_path, conn)
                     pbar.update(1)
-                    #pbar.delay(1.0)
 
-                    #progress_bar.update()
-                    #progress_bar.refresh()
-                #pbar.clear()
-                #pbar.close()
-                # if process_queue.qsize() == 0:
-                #     os.system('cls')
-                #     print('Waiting for new files..')
-
-            elif file_path.is_dir():
-                with tqdm(total=get_file_count_in_folder(file_path), desc=f'{file_path.name[:21]}', unit='file') as pbar:
-                    for file in file_path.iterdir():
-                        if file.is_file() and file.suffix.lower() == '.png':
-                            convert_and_backup(file)
-                            #full_path = file_path / file.name
-                            #save_db_record(full_path, conn)
-                        pbar.update(1)
-
-                pbar.clear()
-                pbar.close()
-                os.system('cls')
+            pbar.clear()
+            pbar.close()
+            os.system('cls')
                                 
     except Exception as e:
         print(e)
@@ -157,8 +157,14 @@ def worker():
         while True:
             
             file_path = process_queue.get()
-            process_file(file_path)
-            process_queue.task_done()
+            #if file_path.suffix.lower() == '.png':
+                # Check if the file has already been added to the queue
+                #if not is_processed(file_path):
+            if wait_for_readable(file_path):
+                process_file(file_path)
+                process_queue.task_done()
+            else:
+                process_queue.task_done()
                 
             
     except Exception as e:
@@ -211,32 +217,35 @@ def wait_for_readable(file_path, max_wait_seconds=5, sleep_duration=0.2):
     Returns:
     - True if the file becomes readable, False otherwise.
     """
-    start_time = time.time()
+    try:
+        start_time = time.time()
 
-    while time.time() - start_time < max_wait_seconds:
-        if os.access(file_path, os.R_OK):
-            return True
+        while time.time() - start_time < max_wait_seconds:
+            if os.access(file_path, os.R_OK):
+                return True
 
-        time.sleep(sleep_duration)
+            time.sleep(sleep_duration)
 
-    return False
+        return False
+    except Exception as e:
+            logger.error(f'Error reading {file_path}: {e}')
 
 
 
 class FileHandler(FileSystemEventHandler):
-    def on_created(self, event):
-        print(event)
-        try:
-            file_path = Path(event.src_path)
-            if event.is_directory:
-                for file in file_path.iterdir():
-                    print(file)
-                    if wait_for_readable(file):
-                        process_queue.put(file)
-                    
 
+    def on_created(self, event):
+        try:
+            if not event.is_directory:
+                file_path = Path(event.src_path)
+                if file_path.suffix.lower() == '.png':
+                
+                    process_queue.put(file_path, timeout=2.0)
+                    #time.sleep(0.1)
+            print(process_queue.queue)
         except Exception as e:
             logger.error(f'Event Error: {e}, Event: {event}')
+
 
 if __name__ == "__main__":
     #Setup logger
@@ -251,21 +260,22 @@ if __name__ == "__main__":
         workers.append(t)
 
     event_handler = FileHandler()
-    observer = Observer()
-    observer.schedule(event_handler, path=start_dir, recursive=False)
+    observer = Observer(timeout=0.5)
+    observer.schedule(event_handler, path=start_dir, recursive=True)
     observer.start()
 
     try:
         while True:
-            time.sleep(0.5)
+            time.sleep(1)
     except KeyboardInterrupt:
         print('Terminating Script, waiting Job to finish')
         observer.stop()
-        observer.join()  # Wait for the observer to finish
 
         process_queue.join()
         #main_conn.close()
         os.system('cls')
+        
     finally:
+        observer.join()  # Wait for the observer to finish
         print('Script Terminated.. ')
     
