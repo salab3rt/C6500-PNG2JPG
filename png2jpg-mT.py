@@ -34,15 +34,8 @@ backup_dir = start_dir / 'backup'
 
 backup_dir.mkdir(parents=True, exist_ok=True)
 
-#main_conn = sqlite3.connect('database.db', check_same_thread=False)
-#cur = main_conn.cursor()
-#
-#cur.execute('CREATE TABLE IF NOT EXISTS processed_files (file_path TEXT PRIMARY KEY)')
-#main_conn.commit()
-#cur.close()
-
-# Create a queue to store the folders that need to be processed
-process_queue = queue.Queue()
+folder_process_queue = queue.Queue()
+file_process_queue = queue.Queue()
 
 #def is_folder_processed(folder_path, file_count = 0):
 #    try:
@@ -95,14 +88,6 @@ def get_file_count_in_folder(folder_path):
             if not is_folder_processed(folder, file_count=file_count):
                 process_queue.put(folder)
 
-#def save_db_record(records, conn):
-#    try:
-#        cur = conn.cursor()
-#        cur.execute('INSERT INTO processed_files (file_path) VALUES (?)', (str(records),))
-#        conn.commit()
-#        cur.close()
-#    except Exception as e:
-#        logger.error(f'SQLite Error: {e}')
         
 
 
@@ -130,7 +115,7 @@ def process_file(file_path):
             #     print('Waiting for new files..')
 
         elif file_path.is_dir():
-            with tqdm(total=get_file_count_in_folder(file_path), desc=f'{file_path.name[:21]}', unit='file') as pbar:
+            with tqdm(total=get_file_count_in_folder(file_path), desc=f'{file_path.name[:22]}', unit='file') as pbar:
                 for file in file_path.iterdir():
                     if file.is_file() and file.suffix.lower() == '.png':
                         convert_and_backup(file)
@@ -150,23 +135,33 @@ def process_file(file_path):
         #print('Waiting for new files..')
     
 
+def folder_worker():
+    try:
+        while file_process_queue.not_empty:
+            
+            folder_path = folder_process_queue.get()
+            print(folder_path)
+            for file in folder_path.iterdir():
+                time.sleep(0.35)
+                if file.suffix.lower() == '.png':
+                    print(file)
+                    if wait_for_readable(file):
+                        file_process_queue.put(file)
+            
+            folder_process_queue.task_done()
+    except Exception as e:
+        print(e)
+        logger.error(f'Worker thread error: {e}')
 
 
-def worker():
+def file_worker():
     try:
         while True:
             
-            file_path = process_queue.get()
-            #if file_path.suffix.lower() == '.png':
-                # Check if the file has already been added to the queue
-                #if not is_processed(file_path):
-            if wait_for_readable(file_path):
-                process_file(file_path)
-                process_queue.task_done()
-            else:
-                process_queue.task_done()
-                
-            
+            file_path = file_process_queue.get()
+            process_file(file_path)
+            file_process_queue.task_done()
+
     except Exception as e:
         print(e)
         logger.error(f'Worker thread error: {e}')
@@ -236,13 +231,12 @@ class FileHandler(FileSystemEventHandler):
 
     def on_created(self, event):
         try:
-            if not event.is_directory:
+            #print(event)
+            #if not event.is_directory:
+            if event.is_directory:
                 file_path = Path(event.src_path)
-                if file_path.suffix.lower() == '.png':
-                
-                    process_queue.put(file_path, timeout=2.0)
-                    #time.sleep(0.1)
-            print(process_queue.queue)
+                folder_process_queue.put(file_path)
+        
         except Exception as e:
             logger.error(f'Event Error: {e}, Event: {event}')
 
@@ -252,16 +246,23 @@ if __name__ == "__main__":
     logger = setup_logging()
     
 
-    workers = []
-    for i in range(4):
-        t = threading.Thread(target=worker)
+    folder_workers = []
+    for i in range(1):
+        t = threading.Thread(target=folder_worker)
         t.daemon = True
         t.start()
-        workers.append(t)
+        folder_workers.append(t)
+
+    files_workers = []
+    for i in range(4):
+        t = threading.Thread(target=file_worker)
+        t.daemon = True
+        t.start()
+        files_workers.append(t)
 
     event_handler = FileHandler()
     observer = Observer(timeout=0.5)
-    observer.schedule(event_handler, path=start_dir, recursive=True)
+    observer.schedule(event_handler, path=start_dir, recursive=False)
     observer.start()
 
     try:
@@ -270,8 +271,8 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print('Terminating Script, waiting Job to finish')
         observer.stop()
-
-        process_queue.join()
+        folder_process_queue.join()
+        file_process_queue.join()
         #main_conn.close()
         os.system('cls')
         
