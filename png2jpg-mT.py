@@ -12,6 +12,13 @@ from tqdm import tqdm
 from colorama import just_fix_windows_console
 
 
+folder_process_queue = queue.Queue(maxsize=-1)
+#file_process_queue = queue.Queue(maxsize=-1)
+
+files_to_process = set()
+files_lock = threading.Lock()
+folders_lock = threading.Lock()
+
 
 def setup_logging():
     
@@ -89,9 +96,11 @@ def process_file(path):
             
         else:
             if not is_processed(path):
-                with tqdm(total=1, desc=f'{path.name[:20]}', unit='file', leave=True) as pbar:
-                    convert_and_backup(path)
+                with tqdm(total=1, desc=f'{path.name[:20]}', unit='file', leave=True, position=0, bar_format="{l_bar}{bar}{elapsed}") as pbar:
+                    converted_file = convert_and_backup(path)
                     pbar.update(1)
+                if not is_readable(converted_file):
+                    process_file(path)
                                 
     except Exception as e:
         print(e)
@@ -117,8 +126,8 @@ def folder_worker():
     try:
         while True:
             time.sleep(.01)
-            with folders_lock:
-                folder_path = folder_process_queue.get()
+            #with folders_lock:
+            folder_path = folder_process_queue.get()
             
             folder = Path(folder_path)
             for file in folder.iterdir():
@@ -136,11 +145,12 @@ def file_worker():
     while True:
         try:
             time.sleep(.01)
-            if files_to_process:
+            if len(files_to_process) > 0:
                 with files_lock:
                     file_path = files_to_process.pop()
                 if is_readable(file_path):
                     process_file(file_path)
+                    
         except Exception as e:
             print(e)
             logger.error(f'File thread error: {e}')
@@ -169,7 +179,8 @@ def convert_and_backup(file_path):
                 dest_path = dest_path.with_suffix('.jpg')
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 img.save(dest_path)
-
+        
+            return dest_path
                 #logger.info(f'Converted file: {file_path}')
 
     except Exception as e:
@@ -183,12 +194,7 @@ if __name__ == "__main__":
     logger = setup_logging()
     
     
-    folder_process_queue = queue.Queue(maxsize=-1)
-    #file_process_queue = queue.Queue(maxsize=-1)
-
-    files_to_process = set()
-    files_lock = threading.Lock()
-    folders_lock = threading.Lock()
+    
     
     folder_workers = []
     for i in range(2):
