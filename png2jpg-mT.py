@@ -4,7 +4,7 @@ from pathlib import Path
 from os import system, access, R_OK
 from PIL import Image
 from watchdog.observers.polling import PollingObserver
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import FileSystemEventHandler, DirCreatedEvent
 import logging
 import time
 from datetime import datetime
@@ -96,10 +96,10 @@ def process_file(path):
             
         else:
             if not is_processed(path):
-                with tqdm(total=1, desc=f'{path.name[:20]}', unit='file', leave=True, position=0, bar_format="{l_bar}{bar}{elapsed}") as pbar:
+                with tqdm(total=1, desc=f'{path.name[:20]}', unit='file', leave=True, position=0, bar_format="{l_bar}{bar}{r_bar}") as pbar:
                     converted_file = convert_and_backup(path)
                     pbar.update(1)
-                if not is_readable(converted_file):
+                if not Path(str(converted_file)).is_file():
                     process_file(path)
                                 
     except Exception as e:
@@ -117,8 +117,9 @@ class FileHandler(FileSystemEventHandler):
         try:
             if event.is_directory:
                 folder_path = Path(event.src_path)
-                #with folders_lock:
+                folders_lock.acquire(blocking=True, timeout=1)
                 folder_process_queue.put(folder_path)
+                folders_lock.release
         except Exception as e:
             logger.error(f'Event Error: {e}, Event: {event}')
 
@@ -126,14 +127,15 @@ def folder_worker():
     try:
         while True:
             time.sleep(.01)
-            #with folders_lock:
+            folders_lock.acquire(blocking=True, timeout=1)
             folder_path = folder_process_queue.get()
+            folders_lock.release
             
             folder = Path(folder_path)
             for file in folder.iterdir():
                 if file.suffix.lower() == '.png':
-                    #with files_lock:
-                    files_to_process.add(file)
+                    with files_lock:
+                        files_to_process.add(file)
             folder_process_queue.task_done()
             
     except Exception as e:
@@ -195,7 +197,13 @@ if __name__ == "__main__":
     
     
     
+
+    event_handler = FileHandler()
+    observer = PollingObserver()
+    observer.schedule(event_handler, path=start_dir, recursive=False)
+    observer.start()
     
+       
     folder_workers = []
     for i in range(2):
         t = threading.Thread(target=folder_worker)
@@ -210,10 +218,6 @@ if __name__ == "__main__":
         t.start()
         files_workers.append(t)
 
-    event_handler = FileHandler()
-    observer = PollingObserver()
-    observer.schedule(event_handler, path=start_dir, recursive=False)
-    observer.start()
 
     for folder in start_dir.iterdir():
         if folder.is_dir():
