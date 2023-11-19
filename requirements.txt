@@ -2,6 +2,5 @@ pathlib
 Pillow
 watchdog
 tqdm
-sqlite3
-click
 colorama
+auto-py-to-exe

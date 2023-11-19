@@ -11,11 +11,6 @@ from datetime import datetime
 from tqdm import tqdm
 from colorama import just_fix_windows_console
 
-folder_process_queue = queue.Queue(maxsize=-1)
-
-files_to_process = set()
-files_lock = threading.Lock()
-folders_lock = threading.Lock()
 
 
 def setup_logging():
@@ -31,11 +26,11 @@ def setup_logging():
 
     return logger
 
-# Define the paths
-start_dir = Path('./imgs')
-backup_dir = start_dir / 'backup'
-
-backup_dir.mkdir(parents=True, exist_ok=True)
+def full_folder_backup(start_folder):
+    for folder in start_folder.iterdir():
+        if folder.is_dir():
+            with files_lock:
+                files_to_process.add(folder)
 
 
 def is_readable(file_path, max_wait_seconds=5, sleep_duration=0.1):
@@ -185,6 +180,20 @@ def convert_and_backup(file_path):
 if __name__ == "__main__":
     
     just_fix_windows_console()
+    
+    
+    # Define the paths
+    start_dir = Path('./imgs')
+    backup_dir = start_dir / 'backup'
+
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    folder_process_queue = queue.Queue(maxsize=-1)
+
+    files_to_process = set()
+    files_lock = threading.Lock()
+    folders_lock = threading.Lock()
+    
     #Setup logger
     logger = setup_logging()
     
@@ -207,10 +216,7 @@ if __name__ == "__main__":
         t.start()
         files_workers.append(t)
 
-    for folder in start_dir.iterdir():
-        if folder.is_dir():
-            with files_lock:
-                files_to_process.add(folder)
+    full_folder_backup(start_dir)
 
     try:
         while True:
