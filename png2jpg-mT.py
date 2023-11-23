@@ -30,10 +30,15 @@ def full_folder_backup(start_folder):
     for folder in start_folder.iterdir():
         if folder.is_dir():
             with files_lock:
-                files_to_process.add(folder)
+                try:
+                    files_to_process.add(folder)
+                except Exception as e:
+                    logger.error(f'Error reading {folder}: {e}')
+                finally:
+                    pass
 
 
-def is_readable(file_path, max_wait_seconds=5, sleep_duration=0.1):
+def is_readable(file_path, max_wait_seconds=5, sleep_duration=0.2):
     try:
         start_time = time.time()
 
@@ -74,21 +79,24 @@ def get_file_count_in_folder(folder_path):
 
 def process_file(path):
     try:
+        if is_readable(path):
+            if path.is_dir():
+                with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[:23]}', unit='file', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} - {rate_fmt}{postfix}") as pbar:
+                    for file in path.iterdir():
+                        if file.suffix.lower() == '.png' and not is_processed(file):
+                            convert_and_backup(file)
+                        pbar.update(1)
+                #system('cls')
+                return True
 
-        if path.is_dir():
-            with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[:23]}', unit='file', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} - {rate_fmt}{postfix}") as pbar:
-                for file in path.iterdir():
-                    if file.suffix.lower() == '.png' and not is_processed(file):
-                        convert_and_backup(file)
-                    pbar.update(1)
-            #system('cls')
-            
+            elif path.suffix.lower() == '.png' and not is_processed(path):
+                    with tqdm(total=1, desc=f'{path.name[:23]}', unit='file', leave=True, position=0, bar_format="{desc} |{bar}| {rate_fmt}") as pbar:
+                        converted_file = convert_and_backup(path)
+                        pbar.update(1)
+                    return converted_file
         else:
-            if path.suffix.lower() == '.png' and not is_processed(path) and is_readable(path):
-                with tqdm(total=1, desc=f'{path.name[:23]}', unit='file', leave=True, position=0, bar_format="{desc} |{bar}| {rate_fmt}") as pbar:
-                    converted_file = convert_and_backup(path)
-                    pbar.update(1)
-                return converted_file
+            logger.error(f'Error processing {path}')
+            return None
                                 
     except Exception as e:
         print(e)
@@ -115,12 +123,12 @@ class FileHandler(FileSystemEventHandler):
         try:
             if event.is_directory:
                 folder_path = Path(event.src_path)
-                if folder_path and event.src_path != start_dir.name:
+                if access(folder_path, R_OK) and folder_path.is_dir() and event.src_path != start_dir.name:
                     #print(event)
-                    for file in folder_path.iterdir():
-                        if file and file.is_file() and file.suffix.lower() == '.png':
-                            with files_lock:
-                                files_to_process.add(file)
+                    folders_lock.acquire(blocking=True, timeout=2)
+                    folder_process_queue.put(folder_path)
+                    folders_lock.release
+
         except Exception as e:
             print(e)
             logger.error(f'On modified Event Error: {e}')
@@ -128,7 +136,7 @@ class FileHandler(FileSystemEventHandler):
 def folder_worker():
     try:
         while True:
-            time.sleep(.002)
+            time.sleep(.001)
             folders_lock.acquire(blocking=True, timeout=2)
             folder_path = folder_process_queue.get()
             folders_lock.release
@@ -154,11 +162,11 @@ def file_worker():
             if len(files_to_process) > 0:
                 with files_lock:
                     file_path = files_to_process.pop()
-                if file_path:
+                if file_path and not is_processed(file_path):
                     retries = 0
                     while retries < max_retries:
                         processed_file = process_file(file_path)
-                        if processed_file and not processed_file.is_file():
+                        if not processed_file:
                             retries += 1
                             logger.warning(f"Processing failed for {file_path}. Retrying attempt {retries}/{max_retries}")
                         else:
@@ -208,8 +216,8 @@ if __name__ == "__main__":
     
     
     # Define the paths
-    start_dir = Path('X:')
-    #start_dir = Path('./imgs')
+    #start_dir = Path('X:')
+    start_dir = Path('./imgs')
 
     backup_dir = start_dir / 'backup'
 
@@ -230,14 +238,14 @@ if __name__ == "__main__":
     observer.start()
     
     folder_workers = []
-    for i in range(2):
+    for i in range(3):
         t = threading.Thread(target=folder_worker)
         t.daemon = True
         t.start()
         folder_workers.append(t)
 
     files_workers = []
-    for i in range(6):
+    for i in range(9):
         t = threading.Thread(target=file_worker)
         t.daemon = True
         t.start()
