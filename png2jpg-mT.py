@@ -76,20 +76,19 @@ def process_file(path):
     try:
 
         if path.is_dir():
-            with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[:22]}', unit='file', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} - {rate_fmt}{postfix}") as pbar:
+            with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[:23]}', unit='file', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} - {rate_fmt}{postfix}") as pbar:
                 for file in path.iterdir():
-                    if not is_processed(file):
+                    if file.suffix.lower() == '.png' and not is_processed(file):
                         convert_and_backup(file)
                     pbar.update(1)
-            system('cls')
+            #system('cls')
             
         else:
-            if not is_processed(path) and is_readable(path):
-                with tqdm(total=1, desc=f'{path.name[:20]}', unit='file', leave=True, position=0, bar_format="{desc} |{bar}| {rate_fmt}") as pbar:
+            if path.suffix.lower() == '.png' and not is_processed(path) and is_readable(path):
+                with tqdm(total=1, desc=f'{path.name[:23]}', unit='file', leave=True, position=0, bar_format="{desc} |{bar}| {rate_fmt}") as pbar:
                     converted_file = convert_and_backup(path)
                     pbar.update(1)
-                if not Path(str(converted_file)).is_file():
-                    process_file(path)
+                return converted_file
                                 
     except Exception as e:
         print(e)
@@ -110,7 +109,21 @@ class FileHandler(FileSystemEventHandler):
                 folder_process_queue.put(folder_path)
                 folders_lock.release
         except Exception as e:
-            logger.error(f'Event Error: {e}, Event: {event}')
+            logger.error(f'On created Event Error: {e}, Event: {event}')
+    
+    def on_modified(self, event):
+        try:
+            if event.is_directory:
+                if event.src_path != start_dir.name:
+                    print(event)
+                    folder_path = Path(event.src_path)
+                    for file in folder_path.iterdir():
+                        if file.suffix.lower() == '.png':
+                            with files_lock:
+                                files_to_process.add(file)
+        except Exception as e:
+            print(e)
+            logger.error(f'On modified Event Error: {e}')
 
 def folder_worker():
     try:
@@ -133,13 +146,25 @@ def folder_worker():
 
 
 def file_worker():
+    max_retries = 3
+
     while True:
         try:
             time.sleep(.01)
             if len(files_to_process) > 0:
                 with files_lock:
                     file_path = files_to_process.pop()
-                process_file(file_path)
+                if file_path:
+                    retries = 0
+                    while retries < max_retries:
+                        processed_file = process_file(file_path)
+                        if processed_file and not processed_file.is_file():
+                            retries += 1
+                            logger.warning(f"Processing failed for {file_path}. Retrying attempt {retries}/{max_retries}")
+                        else:
+                            break  # Break out of the retry loop on successful processing
+                    if retries == max_retries:
+                        logger.error(f"Max retries reached for {file_path}. Skipping file.")
                     
         except Exception as e:
             print(e)
@@ -155,23 +180,23 @@ def convert_and_backup(file_path):
 
         if source_folder_name.startswith('u_701_'):
             custom_folder_name = 'micro_' + source_folder_name[len('u_701_'):]
-        elif source_folder_name.startswith('cobas_6500_'):
+        if source_folder_name.startswith('cobas_6500_'):
             custom_folder_name = 'core_' + source_folder_name[len('cobas_6500_'):]
 
-            with Image.open(file_path) as img:
-                img = img.convert('RGB')
-                new_width = img.width // 2
-                new_height = img.height // 2
-                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        with Image.open(file_path) as img:
+            img = img.convert('RGB')
+            new_width = img.width // 2
+            new_height = img.height // 2
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-                year = datetime.now().year
-                dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
-                dest_path = dest_path.with_suffix('.jpg')
-                dest_path.parent.mkdir(parents=True, exist_ok=True)
-                img.save(dest_path)
-        
-            return dest_path
-                #logger.info(f'Converted file: {file_path}')
+            year = datetime.now().year
+            dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
+            dest_path = dest_path.with_suffix('.jpg')
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            img.save(dest_path)
+    
+        return dest_path
+            #logger.info(f'Converted file: {file_path}')
 
     except Exception as e:
         logger.error(f'Error processing {file_path}: {e}')
@@ -183,7 +208,9 @@ if __name__ == "__main__":
     
     
     # Define the paths
-    start_dir = Path('./imgs')
+    start_dir = Path('X:')
+    #start_dir = Path('./imgs')
+
     backup_dir = start_dir / 'backup'
 
     backup_dir.mkdir(parents=True, exist_ok=True)
