@@ -114,11 +114,11 @@ class FileHandler(FileSystemEventHandler):
     def on_modified(self, event):
         try:
             if event.is_directory:
-                if event.src_path != start_dir.name:
-                    print(event)
-                    folder_path = Path(event.src_path)
+                folder_path = Path(event.src_path)
+                if folder_path and event.src_path != start_dir.name:
+                    #print(event)
                     for file in folder_path.iterdir():
-                        if file.suffix.lower() == '.png':
+                        if file and file.is_file() and file.suffix.lower() == '.png':
                             with files_lock:
                                 files_to_process.add(file)
         except Exception as e:
@@ -128,7 +128,7 @@ class FileHandler(FileSystemEventHandler):
 def folder_worker():
     try:
         while True:
-            time.sleep(.001)
+            time.sleep(.002)
             folders_lock.acquire(blocking=True, timeout=2)
             folder_path = folder_process_queue.get()
             folders_lock.release
