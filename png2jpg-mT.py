@@ -3,8 +3,8 @@ import threading
 from pathlib import Path
 from os import system, access, R_OK
 from PIL import Image
-from watchdog.observers.polling import PollingObserver
-from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler, PatternMatchingEventHandler
 import logging
 import time
 from datetime import datetime
@@ -35,7 +35,7 @@ def full_folder_backup(start_folder):
         except Exception as e:
                     logger.error(f'Error reading {folder}: {e}')
         finally:
-            pass
+            continue
 
 
 def is_readable(file_path, max_wait_seconds=3, sleep_duration=0.01):
@@ -81,11 +81,12 @@ def process_file(path):
     try:
         if is_readable(path):
             if path.is_dir():
-                with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[:23]}', unit='file', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} |") as pbar:
+                with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[:23]}', unit='file', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} |", leave=False) as pbar:
                     for file in path.iterdir():
                         if file.suffix.lower() == '.png' and not is_processed(file):
                             convert_and_backup(file)
                         pbar.update(1)
+                    pbar.close
                 #system('cls')
                 return True
 
@@ -93,6 +94,7 @@ def process_file(path):
                 with tqdm(total=1, desc=f'{path.name[:23]}', unit='file', leave=True, position=0, bar_format="{desc} |{bar}| ") as pbar:
                     converted_file = convert_and_backup(path)
                     pbar.update(1)
+                pbar.close
                 return converted_file
         else:
             logger.error(f'Error processing {path}')
@@ -110,58 +112,57 @@ def process_file(path):
 class FileHandler(FileSystemEventHandler):
 
     def on_created(self, event):
+        #print(event)
         try:
-            if event.is_directory \
-            and event.src_path != str(start_dir) \
-            and event.src_path != str(backup_dir):
-                folder_path = Path(event.src_path)
-                #folders_lock.acquire(blocking=True, timeout=2)
-                folder_process_queue.put(folder_path)
-                #folders_lock.release
-            elif event.is_file:
-                file_path = Path(event.src_path)
-                if not is_processed(file_path):
-                    with files_lock:
-                        files_to_process.add()
+            e_path = Path(event.src_path)
+            if not event.is_directory \
+            and not e_path.parent == backup_dir \
+            and e_path.suffix.lower() == ".png":
+                with files_lock:
+                    files_to_process.add(e_path)
+
 
         except Exception as e:
             logger.error(f'On created Event Error: {e}, Event: {event}')
     
-    #def on_modified(self, event):
-    #    try:
-    #        if event.is_file \
-    #        and event.src_path != str(start_dir) \
-    #        and event.src_path != str(backup_dir):
-    #            folder_path = Path(event.src_path)
-    #            #if access(folder_path, R_OK) \
-    #            #    and folder_path.is_dir():
-    #            with files_lock:
-    #                files_to_process.add(folder_path)
-    #        else:
-    #            pass
+    # def on_modified(self, event):
+    #     try:
+    #         folder_path = Path(event.src_path)
+    #         if event.is_directory \
+    #         and start_dir != event.src_path \
+    #         and not folder_path.parent == backup_dir:
+    #             print(event)
+    #             print(backup_dir)
+    #             with files_lock:
+    #                 files_to_process.add(folder_path)
+    #             #folders_lock.acquire(blocking=True, timeout=2)
+    #             #folder_process_queue.put(folder_path)
+    #             #folders_lock.release
+    #         else:
+    #             pass
 
-        except Exception as e:
-            print(e)
-            logger.error(f'On modified Event Error: {e}')
+    #     except Exception as e:
+    #         print(e)
+    #         logger.error(f'On modified Event Error: {e}')
 
-def folder_worker():
-    try:
-        while True:
-            time.sleep(.001)
-            folders_lock.acquire(blocking=True, timeout=2)
-            folder_path = folder_process_queue.get()
-            folders_lock.release
-            
-            folder = Path(folder_path)
-            for file in folder.iterdir():
-                if file.suffix.lower() == '.png':
-                    with files_lock:
-                        files_to_process.add(file)
-            folder_process_queue.task_done()
-            
-    except Exception as e:
-        print(e)
-        logger.error(f'Folder thread error: {e}')
+#def folder_worker():
+#    try:
+#        while True:
+#            time.sleep(.001)
+#            folders_lock.acquire(blocking=True, timeout=2)
+#            folder_path = folder_process_queue.get()
+#            folders_lock.release
+#            
+#            folder = Path(folder_path)
+#            for file in folder.iterdir():
+#                if file.suffix.lower() == '.png':
+#                    with files_lock:
+#                        files_to_process.add(file)
+#            folder_process_queue.task_done()
+#            
+#    except Exception as e:
+#        print(e)
+#        logger.error(f'Folder thread error: {e}')
 
 
 def file_worker():
@@ -224,7 +225,7 @@ def convert_and_backup(file_path):
 if __name__ == "__main__":
     
     just_fix_windows_console()
-    
+    print('Starting BACKUP Script')
     
     # Define the paths
     start_dir = Path('X:')
@@ -244,19 +245,20 @@ if __name__ == "__main__":
     logger = setup_logging()
     
     event_handler = FileHandler()
-    observer = PollingObserver()
-    observer.schedule(event_handler, path=start_dir, recursive=False)
+    observer = Observer()
+    observer.daemon = True
+    observer.schedule(event_handler, path=start_dir, recursive=True)
     observer.start()
     
-    folder_workers = []
-    for i in range(2):
-        t = threading.Thread(target=folder_worker)
-        t.daemon = True
-        t.start()
-        folder_workers.append(t)
+    #folder_workers = []
+    #for i in range(2):
+    #    t = threading.Thread(target=folder_worker)
+    #    t.daemon = True
+    #    t.start()
+    #    folder_workers.append(t)
 
     files_workers = []
-    for i in range(6):
+    for i in range(9):
         t = threading.Thread(target=file_worker)
         t.daemon = True
         t.start()
