@@ -112,7 +112,7 @@ def process_file(path):
 class FileHandler(FileSystemEventHandler):
 
     def on_created(self, event):
-        #print(event)
+        print(event)
         try:
             e_path = Path(event.src_path)
             if not event.is_directory \
@@ -228,8 +228,8 @@ if __name__ == "__main__":
     print('Starting BACKUP Script')
     
     # Define the paths
-    start_dir = Path('X:')
-    #start_dir = Path('./imgs')
+    #start_dir = Path('X:')
+    start_dir = Path('./imgs')
 
     backup_dir = start_dir / 'backup'
 
@@ -258,7 +258,7 @@ if __name__ == "__main__":
     #    folder_workers.append(t)
 
     files_workers = []
-    for i in range(9):
+    for i in range(6):
         t = threading.Thread(target=file_worker)
         t.daemon = True
         t.start()
