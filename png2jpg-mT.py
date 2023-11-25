@@ -32,7 +32,9 @@ def full_folder_backup(start_folder):
             if folder.is_dir() and folder.name != 'backup':
                 #with files_lock:
                     #files_to_process.add(folder)
+                files_lock.acquire(blocking=True, timeout=2)
                 files_queue.put(folder, timeout=2)
+                files_lock.release()
                 
         except Exception as e:
                     logger.error(f'Error reading {folder}: {e}')
@@ -83,7 +85,7 @@ def process_file(path):
     try:
         if is_readable(path):
             if path.is_dir():
-                with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[:23]}', unit='files', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} |", leave=False) as pbar:
+                with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[17:]}', unit='files', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} |", leave=False) as pbar:
                     for file in path.iterdir():
                         if file.suffix.lower() == '.png' and not is_processed(file):
                             convert_and_backup(file)
@@ -93,7 +95,7 @@ def process_file(path):
                 return True
 
             elif path.is_file():
-                with tqdm(total=1, desc=f'{path.name[:23]}', unit='file', leave=True, position=0, bar_format="{desc} |{bar}| {elapsed} ") as pbar:
+                with tqdm(total=1, desc=f'{path.name}', unit='file', leave=True, position=0, bar_format="{desc} |{bar}| {elapsed} ") as pbar:
                     converted_file = convert_and_backup(path)
                     pbar.update(1)
                 pbar.close
@@ -125,7 +127,10 @@ def monitor_directory(directory):
                 1024,
                 True,
                 win32con.FILE_NOTIFY_CHANGE_FILE_NAME |
-                win32con.FILE_NOTIFY_CHANGE_DIR_NAME,
+                win32con.FILE_NOTIFY_CHANGE_DIR_NAME|
+                win32con.FILE_NOTIFY_CHANGE_ATTRIBUTES |
+                win32con.FILE_NOTIFY_CHANGE_SIZE |
+                win32con.FILE_NOTIFY_CHANGE_LAST_WRITE,
                 None,
                 None
             )
@@ -136,7 +141,9 @@ def monitor_directory(directory):
                     if str(backup_dir)not in str(full_file_path) and full_file_path.suffix.lower() == '.png':
                         #with files_lock:
                             #files_to_process.add(full_file_path)
-                        files_queue.put(full_file_path, timeout=2)
+                        files_lock.acquire(blocking=True, timeout=2)
+                        files_queue.put(full_file_path)
+                        files_lock.release()
                     else:
                         pass
                 elif action == 2:  # File Deleted
@@ -157,7 +164,9 @@ def file_worker():
             if files_queue.qsize() > 0:
                 #with files_lock:
                     #file_path = files_to_process.pop()
+                files_lock.acquire(blocking=True, timeout=2)
                 file_path = files_queue.get(timeout=2)
+                files_lock.release()
                 if file_path and not is_processed(file_path):
                     retries = 0
                     while retries < max_retries:
@@ -215,8 +224,8 @@ if __name__ == "__main__":
     print('Starting BACKUP Script')
     
     # Define the paths
-    #start_dir = Path('X:')
-    start_dir = Path('./imgs')
+    start_dir = Path('X:')
+    #start_dir = Path('./imgs')
 
     backup_dir = start_dir / 'backup'
 
@@ -224,7 +233,7 @@ if __name__ == "__main__":
 
     files_queue = queue.Queue(maxsize=-1)
     #files_to_process = set()
-    #files_lock = threading.Lock()
+    files_lock = threading.Lock()
     
     #Setup logger
     logger = setup_logging()
@@ -247,15 +256,18 @@ if __name__ == "__main__":
                 system('cls')
                 print('Waiting for new files.')
                 time.sleep(1)
-                system('cls')
-                print('Waiting for new files..')
-                time.sleep(1)
-                system('cls')
-                print('Waiting for new files...')
-                time.sleep(1)
-            else:
-                system('cls')
-                print('Processing new files...')
+                if not files_queue.qsize() > 0:
+                    system('cls')
+                    print('Waiting for new files..')
+                    time.sleep(1)
+                if not files_queue.qsize() > 0:
+                    system('cls')
+                    print('Waiting for new files...')
+                    time.sleep(1)
+
+            #else:
+            #    system('cls')
+            #    print(' Processing new files... \n')
                 
             time.sleep(0.5)
     except KeyboardInterrupt:
