@@ -128,7 +128,7 @@ def monitor_directory(directory):
         while not terminate_flag.is_set():
             results = win32file.ReadDirectoryChangesW(
                 hDir,
-                1024,
+                16384,
                 True,
                 win32con.FILE_NOTIFY_CHANGE_FILE_NAME |
                 win32con.FILE_NOTIFY_CHANGE_DIR_NAME|
