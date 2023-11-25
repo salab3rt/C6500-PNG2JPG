@@ -184,7 +184,7 @@ def file_worker():
                         files_lock.acquire(blocking=True, timeout=2)
                         file_path = files_queue.put(file_path, timeout=2)
                         files_lock.release()
-                        logger.error(f"Max retries reached for {file_path}. Skipping file.")
+                        logger.error(f"Max retries reached. Returning {file_path} to queue.")
                 #files_queue.task_done()
                     
         except Exception as e:
@@ -219,9 +219,6 @@ def convert_and_backup(file_path):
             return True
             #logger.info(f'Converted file: {file_path}')
 
-    except PermissionError as pe:
-        logger.error(f'Permission denied while accessing {file_path}: {pe}')
-        return False
     # Handle this specific permission error case
     except Exception as e:
         logger.error(f'Error reading {file_path}: {e}')
