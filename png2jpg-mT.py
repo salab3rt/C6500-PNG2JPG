@@ -83,7 +83,7 @@ def process_file(path):
     try:
         if is_readable(path):
             if path.is_dir():
-                with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[:23]}', unit='file', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} |", leave=False) as pbar:
+                with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[:23]}', unit='files', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} |", leave=False) as pbar:
                     for file in path.iterdir():
                         if file.suffix.lower() == '.png' and not is_processed(file):
                             convert_and_backup(file)
@@ -93,7 +93,7 @@ def process_file(path):
                 return True
 
             elif path.is_file():
-                with tqdm(total=1, desc=f'{path.name[:23]}', unit='file', leave=False, position=0, bar_format="{desc} |{bar}| ") as pbar:
+                with tqdm(total=1, desc=f'{path.name[:23]}', unit='file', leave=True, position=0, bar_format="{desc} |{bar}| {elapsed} ") as pbar:
                     converted_file = convert_and_backup(path)
                     pbar.update(1)
                 pbar.close
@@ -233,7 +233,7 @@ if __name__ == "__main__":
     monitor_thread.start()
 
     files_workers = []
-    for i in range(6):
+    for i in range(9):
         t = threading.Thread(target=file_worker)
         t.daemon = True
         t.start()
