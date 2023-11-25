@@ -42,7 +42,7 @@ def full_folder_backup(start_folder):
             continue
 
 
-def is_readable(file_path, max_wait_seconds=3, sleep_duration=0.01):
+def is_readable(file_path, max_wait_seconds=5, sleep_duration=0.001):
     try:
         start_time = time.time()
 
@@ -83,23 +83,26 @@ def get_file_count_in_folder(folder_path):
 
 def process_file(path):
     try:
-        if is_readable(path):
-            if path.is_dir():
-                with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[17:]}', unit='files', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} |", leave=False) as pbar:
-                    for file in path.iterdir():
-                        if file.suffix.lower() == '.png' and not is_processed(file):
-                            convert_and_backup(file)
-                        pbar.update(1)
-                    pbar.close
-                #system('cls')
-                return True
-
-            elif path.is_file():
-                with tqdm(total=1, desc=f'{path.name}', unit='file', leave=True, position=0, bar_format="{desc} |{bar}| {elapsed} ") as pbar:
-                    converted_file = convert_and_backup(path)
+        if path.is_dir():
+            with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[17:]}', unit='files', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} |", leave=False) as pbar:
+                for file in path.iterdir():
+                    if file.suffix.lower() == '.png' and not is_processed(file):
+                        convert_and_backup(file)
                     pbar.update(1)
                 pbar.close
-                return converted_file
+            #system('cls')
+            return True
+
+        elif path.is_file():
+            with tqdm(total=1, desc=f'{path.name}', unit='file', leave=True, position=0, bar_format="{desc} |{bar}| {elapsed} ") as pbar:
+                processed_file = convert_and_backup(path)
+                pbar.update(1)
+            pbar.close
+            if processed_file:
+                return processed_file
+            else:
+                return None
+            
         else:
             logger.error(f'Error processing {path}')
             return None
@@ -107,6 +110,7 @@ def process_file(path):
     except Exception as e:
         print(e)
         logger.error(f'Error processing {path}: {e}')
+        return None
 
             
 def monitor_directory(directory):
@@ -155,19 +159,19 @@ def monitor_directory(directory):
 
 
 def file_worker():
-    max_retries = 3
+    max_retries = 20
 
     while True:
         try:
-            time.sleep(.001)
+            time.sleep(.01)
             #if len(files_to_process) > 0:
-            if files_queue.qsize() > 0:
+            if not files_queue.empty():
                 #with files_lock:
                     #file_path = files_to_process.pop()
                 files_lock.acquire(blocking=True, timeout=2)
                 file_path = files_queue.get(timeout=2)
                 files_lock.release()
-                if file_path and not is_processed(file_path):
+                if file_path:
                     retries = 0
                     while retries < max_retries:
                         processed_file = process_file(file_path)
@@ -177,8 +181,11 @@ def file_worker():
                         else:
                             break  # Break out of the retry loop on successful processing
                     if retries == max_retries:
+                        files_lock.acquire(blocking=True, timeout=2)
+                        file_path = files_queue.put(file_path, timeout=2)
+                        files_lock.release()
                         logger.error(f"Max retries reached for {file_path}. Skipping file.")
-                files_queue.task_done()
+                #files_queue.task_done()
                     
         except Exception as e:
             print(e)
@@ -196,24 +203,29 @@ def convert_and_backup(file_path):
             custom_folder_name = 'micro_' + source_folder_name[len('u_701_'):]
         if source_folder_name.startswith('cobas_6500_'):
             custom_folder_name = 'core_' + source_folder_name[len('cobas_6500_'):]
+        if is_readable(file_path):
+            with Image.open(file_path, 'r') as img:
+                img = img.convert('RGB')
+                new_width = img.width // 2
+                new_height = img.height // 2
+                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-        with Image.open(file_path) as img:
-            img = img.convert('RGB')
-            new_width = img.width // 2
-            new_height = img.height // 2
-            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                year = datetime.now().year
+                dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
+                dest_path = dest_path.with_suffix('.jpg')
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                img.save(dest_path)
 
-            year = datetime.now().year
-            dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
-            dest_path = dest_path.with_suffix('.jpg')
-            dest_path.parent.mkdir(parents=True, exist_ok=True)
-            img.save(dest_path)
-    
-        return dest_path
+            return True
             #logger.info(f'Converted file: {file_path}')
 
+    except PermissionError as pe:
+        logger.error(f'Permission denied while accessing {file_path}: {pe}')
+        return False
+    # Handle this specific permission error case
     except Exception as e:
-        logger.error(f'Error processing {file_path}: {e}')
+        logger.error(f'Error reading {file_path}: {e}')
+        return False
 
 
 if __name__ == "__main__":
@@ -232,7 +244,7 @@ if __name__ == "__main__":
     backup_dir.mkdir(parents=True, exist_ok=True)
 
     files_queue = queue.Queue(maxsize=-1)
-    #files_to_process = set()
+    #files_to_process = set(range(200000))
     files_lock = threading.Lock()
     
     #Setup logger
@@ -242,7 +254,7 @@ if __name__ == "__main__":
     monitor_thread.start()
 
     files_workers = []
-    for i in range(9):
+    for i in range(6):
         t = threading.Thread(target=file_worker)
         t.daemon = True
         t.start()
@@ -252,15 +264,18 @@ if __name__ == "__main__":
 
     try:
         while not terminate_flag.is_set():
-            if not files_queue.qsize() > 0:
+            if not not files_queue.empty():
+            #if not len(files_to_process) > 0:
                 system('cls')
                 print('Waiting for new files.')
                 time.sleep(1)
-                if not files_queue.qsize() > 0:
+                if not not files_queue.empty():
+                #if not len(files_to_process) > 0:
                     system('cls')
                     print('Waiting for new files..')
                     time.sleep(1)
-                if not files_queue.qsize() > 0:
+                if not not files_queue.empty():
+                #if not len(files_to_process) > 0:
                     system('cls')
                     print('Waiting for new files...')
                     time.sleep(1)
@@ -271,7 +286,7 @@ if __name__ == "__main__":
                 
             time.sleep(0.5)
     except KeyboardInterrupt:
-        files_queue.join()
+        #files_queue.join()
         terminate_flag.set()
         
         system('cls')
