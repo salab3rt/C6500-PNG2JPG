@@ -1,10 +1,10 @@
 import queue
 import threading
+import win32file
+import win32con
 from pathlib import Path
 from os import system, access, R_OK
 from PIL import Image
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, PatternMatchingEventHandler
 import logging
 import time
 from datetime import datetime
@@ -30,8 +30,10 @@ def full_folder_backup(start_folder):
     for folder in start_folder.iterdir():
         try:
             if folder.is_dir() and folder.name != 'backup':
-                with files_lock:
-                    files_to_process.add(folder)
+                #with files_lock:
+                    #files_to_process.add(folder)
+                files_queue.put(folder, timeout=2)
+                
         except Exception as e:
                     logger.error(f'Error reading {folder}: {e}')
         finally:
@@ -91,7 +93,7 @@ def process_file(path):
                 return True
 
             elif path.is_file():
-                with tqdm(total=1, desc=f'{path.name[:23]}', unit='file', leave=True, position=0, bar_format="{desc} |{bar}| ") as pbar:
+                with tqdm(total=1, desc=f'{path.name[:23]}', unit='file', leave=False, position=0, bar_format="{desc} |{bar}| ") as pbar:
                     converted_file = convert_and_backup(path)
                     pbar.update(1)
                 pbar.close
@@ -103,66 +105,46 @@ def process_file(path):
     except Exception as e:
         print(e)
         logger.error(f'Error processing {path}: {e}')
-        
-    #finally:
-    #    if not files_to_process:
-    #        system('cls')
+
             
-            
-class FileHandler(FileSystemEventHandler):
+def monitor_directory(directory):
+    FILE_LIST_DIRECTORY = 0x0001
+    hDir = win32file.CreateFile(
+        directory,
+        FILE_LIST_DIRECTORY,
+        win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE,
+        None,
+        win32con.OPEN_EXISTING,
+        win32con.FILE_FLAG_BACKUP_SEMANTICS,
+        None
+    )
+    try:
+        while not terminate_flag.is_set():
+            results = win32file.ReadDirectoryChangesW(
+                hDir,
+                1024,
+                True,
+                win32con.FILE_NOTIFY_CHANGE_FILE_NAME |
+                win32con.FILE_NOTIFY_CHANGE_DIR_NAME,
+                None,
+                None
+            )
 
-    def on_created(self, event):
-        print(event)
-        try:
-            e_path = Path(event.src_path)
-            if not event.is_directory \
-            and not e_path.parent == backup_dir \
-            and e_path.suffix.lower() == ".png":
-                with files_lock:
-                    files_to_process.add(e_path)
-
-
-        except Exception as e:
-            logger.error(f'On created Event Error: {e}, Event: {event}')
-    
-    # def on_modified(self, event):
-    #     try:
-    #         folder_path = Path(event.src_path)
-    #         if event.is_directory \
-    #         and start_dir != event.src_path \
-    #         and not folder_path.parent == backup_dir:
-    #             print(event)
-    #             print(backup_dir)
-    #             with files_lock:
-    #                 files_to_process.add(folder_path)
-    #             #folders_lock.acquire(blocking=True, timeout=2)
-    #             #folder_process_queue.put(folder_path)
-    #             #folders_lock.release
-    #         else:
-    #             pass
-
-    #     except Exception as e:
-    #         print(e)
-    #         logger.error(f'On modified Event Error: {e}')
-
-#def folder_worker():
-#    try:
-#        while True:
-#            time.sleep(.001)
-#            folders_lock.acquire(blocking=True, timeout=2)
-#            folder_path = folder_process_queue.get()
-#            folders_lock.release
-#            
-#            folder = Path(folder_path)
-#            for file in folder.iterdir():
-#                if file.suffix.lower() == '.png':
-#                    with files_lock:
-#                        files_to_process.add(file)
-#            folder_process_queue.task_done()
-#            
-#    except Exception as e:
-#        print(e)
-#        logger.error(f'Folder thread error: {e}')
+            for action, file_name in results:
+                full_file_path = Path(directory) / file_name
+                if action == 1:  # File Created
+                    if str(backup_dir)not in str(full_file_path) and full_file_path.suffix.lower() == '.png':
+                        #with files_lock:
+                            #files_to_process.add(full_file_path)
+                        files_queue.put(full_file_path, timeout=2)
+                    else:
+                        pass
+                elif action == 2:  # File Deleted
+                    # Handle file deletion if needed
+                    pass
+                # Add handling for other actions as needed
+    except Exception as e:
+        logger.error(f'Handler error: {e}')
 
 
 def file_worker():
@@ -170,10 +152,12 @@ def file_worker():
 
     while True:
         try:
-            time.sleep(.01)
-            if len(files_to_process) > 0:
-                with files_lock:
-                    file_path = files_to_process.pop()
+            time.sleep(.001)
+            #if len(files_to_process) > 0:
+            if files_queue.qsize() > 0:
+                #with files_lock:
+                    #file_path = files_to_process.pop()
+                file_path = files_queue.get(timeout=2)
                 if file_path and not is_processed(file_path):
                     retries = 0
                     while retries < max_retries:
@@ -185,6 +169,7 @@ def file_worker():
                             break  # Break out of the retry loop on successful processing
                     if retries == max_retries:
                         logger.error(f"Max retries reached for {file_path}. Skipping file.")
+                files_queue.task_done()
                     
         except Exception as e:
             print(e)
@@ -224,6 +209,8 @@ def convert_and_backup(file_path):
 
 if __name__ == "__main__":
     
+    terminate_flag = threading.Event()
+    
     just_fix_windows_console()
     print('Starting BACKUP Script')
     
@@ -235,27 +222,15 @@ if __name__ == "__main__":
 
     backup_dir.mkdir(parents=True, exist_ok=True)
 
-    folder_process_queue = queue.Queue(maxsize=-1)
-
-    files_to_process = set()
-    files_lock = threading.Lock()
-    folders_lock = threading.Lock()
+    files_queue = queue.Queue(maxsize=-1)
+    #files_to_process = set()
+    #files_lock = threading.Lock()
     
     #Setup logger
     logger = setup_logging()
     
-    event_handler = FileHandler()
-    observer = Observer()
-    observer.daemon = True
-    observer.schedule(event_handler, path=start_dir, recursive=True)
-    observer.start()
-    
-    #folder_workers = []
-    #for i in range(2):
-    #    t = threading.Thread(target=folder_worker)
-    #    t.daemon = True
-    #    t.start()
-    #    folder_workers.append(t)
+    monitor_thread = threading.Thread(target=monitor_directory, args=(str(start_dir),), daemon=True)
+    monitor_thread.start()
 
     files_workers = []
     for i in range(6):
@@ -267,8 +242,8 @@ if __name__ == "__main__":
     full_folder_backup(start_dir)
 
     try:
-        while True:
-            if not files_to_process:
+        while not terminate_flag.is_set():
+            if not files_queue.qsize() > 0:
                 system('cls')
                 print('Waiting for new files.')
                 time.sleep(1)
@@ -278,17 +253,20 @@ if __name__ == "__main__":
                 system('cls')
                 print('Waiting for new files...')
                 time.sleep(1)
-            time.sleep(0.1)
+            else:
+                system('cls')
+                print('Processing new files...')
+                
+            time.sleep(0.5)
     except KeyboardInterrupt:
+        files_queue.join()
+        terminate_flag.set()
+        
         system('cls')
         print('Terminating Script, waiting Job to finish')
-        observer.stop()
-        
-        observer.join()  # Wait for the observer to finish
-        folder_process_queue.all_tasks_done
-        #file_process_queue.all_tasks_done
         
     finally:
+
         system('cls')
         print('Script Terminated.. ')
     
