@@ -1,6 +1,6 @@
 pathlib
 Pillow
-watchdog
+pywin32
 tqdm
 colorama
 auto-py-to-exe
