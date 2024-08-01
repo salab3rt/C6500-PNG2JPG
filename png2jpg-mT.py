@@ -27,20 +27,17 @@ def setup_logging():
     return logger
 
 def full_folder_backup(start_folder):
-    for folder in start_folder.iterdir():
         try:
-            if folder.is_dir() and folder.name != 'backup':
-                #with files_lock:
-                    #files_to_process.add(folder)
-                files_lock.acquire(blocking=True, timeout=2)
-                files_queue.put(folder, timeout=2)
-                files_lock.release()
-                
+            system('cls')
+            print(' Checking Folders... \n')
+            for folder in start_folder.iterdir():
+                if folder.is_dir() and folder.name != 'backup':
+                    folders_queue.put(folder, timeout=2)
+            
         except Exception as e:
                     logger.error(f'Error reading {folder}: {e}')
         finally:
-            continue
-
+            pass
 
 def is_readable(file_path, max_wait_seconds=5, sleep_duration=0.001):
     try:
@@ -71,7 +68,7 @@ def is_processed(file_path):
     dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
     dest_path = dest_path.with_suffix('.jpg')
 
-    if dest_path.is_file():
+    if dest_path.exists() and dest_path.is_file():
         return True
     else:
         return False
@@ -86,7 +83,7 @@ def process_file(path):
         if path.is_dir():
             with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[17:]}', unit='files', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} |", leave=False) as pbar:
                 for file in path.iterdir():
-                    if file.suffix.lower() == '.png' and not is_processed(file):
+                    if file.suffix.lower() == '.png' and is_processed(file) == False:
                         convert_and_backup(file)
                     pbar.update(1)
                 pbar.close
@@ -145,9 +142,7 @@ def monitor_directory(directory):
                     if str(backup_dir)not in str(full_file_path) and full_file_path.suffix.lower() == '.png':
                         #with files_lock:
                             #files_to_process.add(full_file_path)
-                        files_lock.acquire(blocking=True, timeout=2)
                         files_queue.put(full_file_path)
-                        files_lock.release()
                     else:
                         pass
                 elif action == 2:  # File Deleted
@@ -157,13 +152,23 @@ def monitor_directory(directory):
     except Exception as e:
         logger.error(f'Handler error: {e}')
 
+def folder_worker():
+    while True:
+        try:
+            time.sleep(0.1)
+            if not folders_queue.empty():
+                folder_path = folders_queue.get()
+                check_backups_in_folder(folder_path)
+                folders_queue.task_done()
+        except Exception as e:
+            logger.error(f'Folder worker error: {e}')
 
 def file_worker():
     max_retries = 20
 
     while True:
         try:
-            time.sleep(.01)
+            time.sleep(.1)
             #if len(files_to_process) > 0:
             if not files_queue.empty():
                 #with files_lock:
@@ -181,16 +186,29 @@ def file_worker():
                         else:
                             break  # Break out of the retry loop on successful processing
                     if retries == max_retries:
+                        logger.error(f"Max retries reached. Returning {file_path} to queue.")
                         files_lock.acquire(blocking=True, timeout=2)
                         files_queue.put(file_path, timeout=2)
                         files_lock.release()
-                        logger.error(f"Max retries reached. Returning {file_path} to queue.")
                 #files_queue.task_done()
                     
         except Exception as e:
             print(e)
             logger.error(f'File thread error: {e}')
         
+
+def check_backups_in_folder(folder_path):
+    try:
+        needs_processing = False
+        for file_path in folder_path.iterdir():
+            if file_path.exists() and file_path.is_file() and file_path.suffix.lower() == '.png' and not is_processed(file_path):
+                needs_processing = True
+                break
+        
+        if needs_processing:
+            files_queue.put(folder_path)
+    except Exception as e:
+        logger.error(f'Error checking backups in folder {folder_path}: {e}')
 
 # Function to convert and backup a file
 def convert_and_backup(file_path):
@@ -250,6 +268,15 @@ if __name__ == "__main__":
     monitor_thread = threading.Thread(target=monitor_directory, args=(str(start_dir),), daemon=True)
     monitor_thread.start()
 
+    folders_queue = queue.Queue(maxsize=-1)
+
+    folder_workers = []
+    for i in range(6):
+        t = threading.Thread(target=folder_worker)
+        t.daemon = True
+        t.start()
+        folder_workers.append(t)
+
     files_workers = []
     for i in range(6):
         t = threading.Thread(target=file_worker)
@@ -261,27 +288,30 @@ if __name__ == "__main__":
 
     try:
         while not terminate_flag.is_set():
-            if not not files_queue.empty():
+            if files_queue.empty() and folders_queue.empty():
             #if not len(files_to_process) > 0:
                 system('cls')
                 print('Waiting for new files.')
                 time.sleep(1)
-                if not not files_queue.empty():
+                if files_queue.empty():
                 #if not len(files_to_process) > 0:
                     system('cls')
                     print('Waiting for new files..')
                     time.sleep(1)
-                if not not files_queue.empty():
+                if files_queue.empty():
                 #if not len(files_to_process) > 0:
                     system('cls')
                     print('Waiting for new files...')
+                    time.sleep(1)
+                if not folders_queue.empty():
+                    print('Checking all folders...')
                     time.sleep(1)
 
             #else:
             #    system('cls')
             #    print(' Processing new files... \n')
                 
-            time.sleep(0.5)
+            time.sleep(0.2)
     except KeyboardInterrupt:
         #files_queue.join()
         terminate_flag.set()
