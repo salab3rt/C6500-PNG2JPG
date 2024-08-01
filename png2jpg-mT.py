@@ -182,7 +182,7 @@ def file_worker():
                             break  # Break out of the retry loop on successful processing
                     if retries == max_retries:
                         files_lock.acquire(blocking=True, timeout=2)
-                        file_path = files_queue.put(file_path, timeout=2)
+                        files_queue.put(file_path, timeout=2)
                         files_lock.release()
                         logger.error(f"Max retries reached. Returning {file_path} to queue.")
                 #files_queue.task_done()
