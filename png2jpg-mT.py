@@ -39,7 +39,7 @@ def full_folder_backup(start_folder):
         finally:
             pass
 
-def is_readable(file_path, max_wait_seconds=5, sleep_duration=0.001):
+def is_readable(file_path, max_wait_seconds=5, sleep_duration=0.01):
     try:
         start_time = time.time()
 
@@ -48,15 +48,19 @@ def is_readable(file_path, max_wait_seconds=5, sleep_duration=0.001):
                 return True
 
             time.sleep(sleep_duration)
-        logger.error(f'Error reading {file_path}')
+        #logger.error(f'Error reading {file_path}')
         return False
     except Exception as e:
-            logger.error(f'Error reading {file_path}: {e}')
+        logger.error(f'Error reading {file_path}: {e}')
 
 
 def is_processed(file_path):
     
     parent_folder = file_path.parent.name
+
+    sample_name = parent_folder.split('_')[3]
+    sample_folder_name = sample_name if sample_name[-3:] not in ['600', '800'] else sample_name[0:len(sample_name) -3]
+
     custom_folder_name = ''
     if parent_folder.startswith('u_701_'):
         custom_folder_name = 'micro_' + parent_folder[len('u_701_'):]
@@ -65,7 +69,7 @@ def is_processed(file_path):
         custom_folder_name = 'core_' + parent_folder[len('cobas_6500_'):]
 
     year = datetime.now().year
-    dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
+    dest_path = backup_dir / str(year) / sample_folder_name / custom_folder_name / file_path.name
     dest_path = dest_path.with_suffix('.jpg')
 
     if dest_path.exists() and dest_path.is_file():
@@ -84,21 +88,23 @@ def process_file(path):
             with tqdm(total=get_file_count_in_folder(path), desc=f'{path.name[17:]}', unit='files', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} |", leave=False) as pbar:
                 for file in path.iterdir():
                     if file.suffix.lower() == '.png' and is_processed(file) == False:
-                        convert_and_backup(file)
+                        process_file = convert_and_backup(file)
+                        if not process_file:
+                            pbar.close
+                            pbar.update(1)
+                            pbar.close
+                            return False
                     pbar.update(1)
                 pbar.close
             #system('cls')
             return True
 
         elif path.is_file():
-            with tqdm(total=1, desc=f'{path.name}', unit='file', leave=True, position=0, bar_format="{desc} |{bar}| {elapsed} ") as pbar:
+            with tqdm(total=1, desc=f'{path.name}', unit='file', leave=False, position=0, bar_format="{desc} |{bar}| {elapsed} ") as pbar:
                 processed_file = convert_and_backup(path)
                 pbar.update(1)
             pbar.close
-            if processed_file:
-                return processed_file
-            else:
-                return None
+            return processed_file
             
         else:
             logger.error(f'Error processing {path}')
@@ -107,7 +113,7 @@ def process_file(path):
     except Exception as e:
         print(e)
         logger.error(f'Error processing {path}: {e}')
-        return None
+        return False
 
             
 def monitor_directory(directory):
@@ -180,13 +186,14 @@ def file_worker():
                     retries = 0
                     while retries < max_retries:
                         processed_file = process_file(file_path)
-                        if not processed_file:
-                            retries += 1
-                            logger.warning(f"Processing failed for {file_path}. Retrying attempt {retries}/{max_retries}")
+                        if processed_file:
+                            logger.warning(f"Processed {file_path}.")
+                            break
                         else:
-                            break  # Break out of the retry loop on successful processing
+                            retries += 1
+                            #logger.warning(f"Processing failed for {file_path}. Retrying attempt {retries}/{max_retries}")
                     if retries == max_retries:
-                        logger.error(f"Max retries reached. Returning {file_path} to queue.")
+                        #logger.error(f"Max retries reached. Returning {file_path} to queue.")
                         files_lock.acquire(blocking=True, timeout=2)
                         files_queue.put(file_path, timeout=2)
                         files_lock.release()
@@ -217,6 +224,9 @@ def convert_and_backup(file_path):
         source_folder_name = folder_path.name
         custom_folder_name = source_folder_name
 
+        sample_name = source_folder_name.split('_')[3]
+        sample_folder_name = sample_name if sample_name[-3:] not in ['600', '800'] else sample_name[0:len(sample_name) -3]
+        
         if source_folder_name.startswith('u_701_'):
             custom_folder_name = 'micro_' + source_folder_name[len('u_701_'):]
         if source_folder_name.startswith('cobas_6500_'):
@@ -229,17 +239,16 @@ def convert_and_backup(file_path):
                 img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
                 year = datetime.now().year
-                dest_path = backup_dir / str(year) / custom_folder_name / file_path.name
+                dest_path = backup_dir / str(year) / sample_folder_name / custom_folder_name / file_path.name
                 dest_path = dest_path.with_suffix('.jpg')
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 img.save(dest_path)
 
             return True
-            #logger.info(f'Converted file: {file_path}')
-
-    # Handle this specific permission error case
-    except Exception as e:
-        logger.error(f'Error reading {file_path}: {e}')
+        else:
+            return False
+    except:
+        #logger.error(f'Error converting file - {file_path}: {e}')
         return False
 
 
