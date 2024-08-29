@@ -3,7 +3,8 @@ import threading
 import win32file
 import win32con
 from pathlib import Path
-from os import system, access, R_OK
+import os
+from os import system, access, R_OK, walk, scandir
 from PIL import Image
 import logging
 import time
@@ -28,14 +29,17 @@ def setup_logging():
 
 def full_folder_backup(start_folder):
         try:
+            folder_count = count_total_folders()
             system('cls')
-            print(' Checking Folders... \n')
+            print(f' Checking {folder_count} Folders...\n')
+
             for folder in start_folder.iterdir():
                 if folder.is_dir() and folder.name != 'backup':
                     folders_queue.put(folder, timeout=2)
-            
+                    #pbar.update(1)
+           # pbar.close()
         except Exception as e:
-                    logger.error(f'Error reading {folder}: {e}')
+            logger.error(f'Error reading {folder}: {e}')
         finally:
             pass
 
@@ -59,7 +63,11 @@ def is_processed(file_path):
     parent_folder = file_path.parent.name
 
     sample_name = parent_folder.split('_')[3]
-    sample_folder_name = sample_name if sample_name[-3:] not in ['600', '800'] else sample_name[0:len(sample_name) -3]
+    #sample_folder_name = sample_name if sample_name[-3:] not in ['600', '800'] else sample_name[0:len(sample_name) -3]
+    if sample_name[-1:] == 'R':
+        sample_folder_name = sample_name if sample_name[-4:] not in ['600R', '800R', '150R', '809R', '899R'] else sample_name[0:len(sample_name) -4]
+    else:
+        sample_folder_name = sample_name if sample_name[-3:] not in ['600', '800', '150', '809', '899'] else sample_name[0:len(sample_name) -3]
 
     custom_folder_name = ''
     if parent_folder.startswith('u_701_'):
@@ -160,8 +168,8 @@ def monitor_directory(directory):
 
 def folder_worker():
     while True:
+        time.sleep(0.1)
         try:
-            time.sleep(0.1)
             if not folders_queue.empty():
                 folder_path = folders_queue.get()
                 check_backups_in_folder(folder_path)
@@ -173,14 +181,14 @@ def file_worker():
     max_retries = 20
 
     while True:
+        time.sleep(0.1)
         try:
-            time.sleep(.1)
             #if len(files_to_process) > 0:
             if not files_queue.empty():
                 #with files_lock:
                     #file_path = files_to_process.pop()
-                files_lock.acquire(blocking=True, timeout=2)
-                file_path = files_queue.get(timeout=2)
+                files_lock.acquire(blocking=True, timeout=2.0)
+                file_path = files_queue.get(timeout=2.0)
                 files_lock.release()
                 if file_path:
                     retries = 0
@@ -207,13 +215,17 @@ def file_worker():
 def check_backups_in_folder(folder_path):
     try:
         needs_processing = False
-        for file_path in folder_path.iterdir():
-            if file_path.exists() and file_path.is_file() and file_path.suffix.lower() == '.png' and not is_processed(file_path):
-                needs_processing = True
-                break
+        with tqdm(total=get_file_count_in_folder(folder_path), desc=f'Checking files', unit='Folders', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} |", leave=False) as pbar:
+            for file_path in folder_path.iterdir():
+                if file_path.exists() and file_path.is_file() and file_path.suffix.lower() == '.png' and not is_processed(file_path):
+                    needs_processing = True
+                    break
+                pbar.update(1)
+            folder_pbar.update(1)
         
         if needs_processing:
             files_queue.put(folder_path)
+            pbar.close()
     except Exception as e:
         logger.error(f'Error checking backups in folder {folder_path}: {e}')
 
@@ -225,7 +237,11 @@ def convert_and_backup(file_path):
         custom_folder_name = source_folder_name
 
         sample_name = source_folder_name.split('_')[3]
-        sample_folder_name = sample_name if sample_name[-3:] not in ['600', '800'] else sample_name[0:len(sample_name) -3]
+        #sample_folder_name = sample_name if sample_name[-3:] not in ['600', '800'] else sample_name[0:len(sample_name) -3]
+        if sample_name[-1:] == 'R':
+            sample_folder_name = sample_name if sample_name[-4:] not in ['600R', '800R', '150R', '809R', '899R'] else sample_name[0:len(sample_name) -4]
+        else:
+            sample_folder_name = sample_name if sample_name[-3:] not in ['600', '800', '150', '809', '899'] else sample_name[0:len(sample_name) -3]
         
         if source_folder_name.startswith('u_701_'):
             custom_folder_name = 'micro_' + source_folder_name[len('u_701_'):]
@@ -251,6 +267,9 @@ def convert_and_backup(file_path):
         #logger.error(f'Error converting file - {file_path}: {e}')
         return False
 
+def count_total_folders():
+    return sum(1 for entry in os.scandir(start_dir) if entry.is_dir() and entry.name != 'backup')
+
 
 if __name__ == "__main__":
     
@@ -270,6 +289,8 @@ if __name__ == "__main__":
     files_queue = queue.Queue(maxsize=-1)
     #files_to_process = set(range(200000))
     files_lock = threading.Lock()
+
+    folder_pbar = tqdm(total=count_total_folders(), desc=f'Folders', unit='folders', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} |", leave=False)
     
     #Setup logger
     logger = setup_logging()
@@ -280,7 +301,7 @@ if __name__ == "__main__":
     folders_queue = queue.Queue(maxsize=-1)
 
     folder_workers = []
-    for i in range(6):
+    for i in range(8):
         t = threading.Thread(target=folder_worker)
         t.daemon = True
         t.start()
@@ -315,6 +336,8 @@ if __name__ == "__main__":
                 if not folders_queue.empty():
                     print('Checking all folders...')
                     time.sleep(1)
+            if folders_queue.empty():
+                folder_pbar.close()
 
             #else:
             #    system('cls')
