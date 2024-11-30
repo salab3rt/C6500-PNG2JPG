@@ -1,7 +1,6 @@
 pathlib
 Pillow
-watchdog
+pywin32
 tqdm
-sqlite3
-click
 colorama
+auto-py-to-exe
