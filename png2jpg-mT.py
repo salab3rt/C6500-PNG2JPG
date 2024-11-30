@@ -52,7 +52,6 @@ def is_readable(file_path, max_wait_seconds=5, sleep_duration=0.01):
                 return True
 
             time.sleep(sleep_duration)
-        #logger.error(f'Error reading {file_path}')
         return False
     except Exception as e:
         logger.error(f'Error reading {file_path}: {e}')
@@ -154,15 +153,11 @@ def monitor_directory(directory):
                 full_file_path = Path(directory) / file_name
                 if action == 1:  # File Created
                     if str(backup_dir)not in str(full_file_path) and full_file_path.suffix.lower() == '.png':
-                        #with files_lock:
-                            #files_to_process.add(full_file_path)
                         files_queue.put(full_file_path)
                     else:
                         pass
                 elif action == 2:  # File Deleted
-                    # Handle file deletion if needed
                     pass
-                # Add handling for other actions as needed
     except Exception as e:
         logger.error(f'Handler error: {e}')
 
@@ -183,10 +178,7 @@ def file_worker():
     while True:
         time.sleep(0.1)
         try:
-            #if len(files_to_process) > 0:
             if not files_queue.empty():
-                #with files_lock:
-                    #file_path = files_to_process.pop()
                 files_lock.acquire(blocking=True, timeout=2.0)
                 file_path = files_queue.get(timeout=2.0)
                 files_lock.release()
@@ -199,13 +191,10 @@ def file_worker():
                             break
                         else:
                             retries += 1
-                            #logger.warning(f"Processing failed for {file_path}. Retrying attempt {retries}/{max_retries}")
                     if retries == max_retries:
-                        #logger.error(f"Max retries reached. Returning {file_path} to queue.")
                         files_lock.acquire(blocking=True, timeout=2)
                         files_queue.put(file_path, timeout=2)
                         files_lock.release()
-                #files_queue.task_done()
                     
         except Exception as e:
             print(e)
@@ -237,7 +226,6 @@ def convert_and_backup(file_path):
         custom_folder_name = source_folder_name
 
         sample_name = source_folder_name.split('_')[3]
-        #sample_folder_name = sample_name if sample_name[-3:] not in ['600', '800'] else sample_name[0:len(sample_name) -3]
         if sample_name[-1:] == 'R':
             sample_folder_name = sample_name if sample_name[-4:] not in ['600R', '800R', '150R', '809R', '899R'] else sample_name[0:len(sample_name) -4]
         else:
@@ -280,14 +268,12 @@ if __name__ == "__main__":
     
     # Define the paths
     start_dir = Path('X:')
-    #start_dir = Path('./imgs')
 
     backup_dir = start_dir / 'backup'
 
     backup_dir.mkdir(parents=True, exist_ok=True)
 
     files_queue = queue.Queue(maxsize=-1)
-    #files_to_process = set(range(200000))
     files_lock = threading.Lock()
 
     folder_pbar = tqdm(total=count_total_folders(), desc=f'Folders', unit='folders', bar_format="{desc} |{bar}| [{n_fmt}/{total_fmt}] {elapsed} |", leave=False)
@@ -319,17 +305,14 @@ if __name__ == "__main__":
     try:
         while not terminate_flag.is_set():
             if files_queue.empty() and folders_queue.empty():
-            #if not len(files_to_process) > 0:
                 system('cls')
                 print('Waiting for new files.')
                 time.sleep(1)
                 if files_queue.empty():
-                #if not len(files_to_process) > 0:
                     system('cls')
                     print('Waiting for new files..')
                     time.sleep(1)
                 if files_queue.empty():
-                #if not len(files_to_process) > 0:
                     system('cls')
                     print('Waiting for new files...')
                     time.sleep(1)
@@ -339,10 +322,6 @@ if __name__ == "__main__":
             if folders_queue.empty():
                 folder_pbar.close()
 
-            #else:
-            #    system('cls')
-            #    print(' Processing new files... \n')
-                
             time.sleep(0.2)
     except KeyboardInterrupt:
         #files_queue.join()
