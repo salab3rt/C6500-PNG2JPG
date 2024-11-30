@@ -59,6 +59,7 @@ u_701_testespngs - Cópia/
 *.png
 *.jpg
 *.db
+*.exe
 
 # Translations
 *.mo
