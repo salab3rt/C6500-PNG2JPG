@@ -2,8 +2,9 @@
 
 ### Purpose
 
-This script addresses a real-world problem where urine sediment microscope images need to be stored for over a year. Each image is typically ~1MB in size, but the laboratory infrastructure automatically deletes them after 5 days. The script reduces disk usage by downscaling and converting these images to JPG format, shrinking each file to only ~50KB while maintaining excellent quality. This allows for long-term storage without space constraints.
+This script addresses a real-world problem where urine sediment microscope images need to be stored for over a year. Each image is typically ~1MB in size, but the laboratory infrastructure automatically deletes them after 5 days. The script reduces disk usage by downscaling and converting these images to JPG format, shrinking each file to only ~50KB while maintaining excellent quality. This allows for long-term storage without space constraints.  
 
+Additionally, the user can compile the script into a standalone executable using **auto-py-to-exe**, making it easier to distribute and run on systems without requiring a Python installation.
 
 This script monitors a specified folder for new `.png` files. When a new file is detected, it performs the following actions:
 - Downscales the image to half its original size.
